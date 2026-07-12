@@ -57,11 +57,33 @@ add_compile_options(
 
 
 
+# TI_RTS_LIB/TI_LIBC_LIB are always exposed as variables so a project can
+# add them itself via target_link_libraries(). By default they're ALSO added
+# early here via add_link_options() (harmless under CMake's default TI link
+# rule, --run_linker mode). But archive-library link order matters with a
+# "-z"-style link invocation (which some projects use instead of
+# --run_linker -- see Barebones_MSS/CMakeLists.txt, --run_linker mode has its
+# own correctness problems): rts.lib and libc.a must be listed AFTER the
+# objects/libraries that reference their symbols, or the linker silently
+# omits code it should have pulled in from them -- confirmed to cause ~6KB of
+# missing code and a flashes-but-does-nothing image, with no build error, and
+# NOT fixed by --reread_libs. A project that needs correct ordering should
+# set TI_DEFER_RTS_LIBS to ON *before* including this file, which skips
+# adding them here, then add ${TI_RTS_LIB} ${TI_LIBC_LIB} itself via
+# target_link_libraries() LAST (after all its own libraries).
+set(TI_RTS_LIB "${TI_CGT_ROOT}/lib/rtsv7R4_T_le_v3D16_eabi.lib")
+set(TI_LIBC_LIB "${TI_CGT_ROOT}/lib/libc.a")
+
+if(TI_DEFER_RTS_LIBS)
+   set(_TI_EARLY_RTS_LIBS)
+else()
+   set(_TI_EARLY_RTS_LIBS ${TI_RTS_LIB} ${TI_LIBC_LIB})
+endif()
+
 add_link_options(
    -mv7R4
    -m "mss_program.xer4f.map"
-   "${TI_CGT_ROOT}/lib/rtsv7R4_T_le_v3D16_eabi.lib"
-   "${TI_CGT_ROOT}/lib/libc.a"
+   ${_TI_EARLY_RTS_LIBS}
    --heap_size=0x800
    --stack_size=0x800
    --reread_libs
