@@ -190,6 +190,8 @@ validation uses the completely different CRC64 scheme from stage 3,
 computed by hardware); it exists purely for host-side flashing tools
 (UniFlash etc.) to sanity-check that the .bin reached target flash intact.
 """
+from __future__ import annotations
+
 import struct
 import sys
 import zlib
@@ -198,18 +200,25 @@ import zlib
 # Stage 1: ELF -> RPRC
 # ---------------------------------------------------------------------------
 
-RPRC_MAGIC = b"RPRC"
-RPRC_VERSION = 1
+RPRC_MAGIC: bytes = b"RPRC"
+RPRC_VERSION: int = 1
 
-ELF_SHT_PROGBITS = 1
-ELF_PT_LOAD = 1
+ELF_SHT_PROGBITS: int = 1
+ELF_PT_LOAD: int = 1
+
+# (p_type, p_offset, p_vaddr, p_paddr, p_filesz)
+ElfSegment = tuple[int, int, int, int, int]
+# (sh_type, sh_addr, sh_offset, sh_size)
+ElfSectionHeader = tuple[int, int, int, int]
+# (load_addr, size, file_offset)
+RprcSection = tuple[int, int, int]
 
 
-def _is_elf(data):
+def _is_elf(data: bytes) -> bool:
     return data[0:4] == b"\x7fELF"
 
 
-def elf_to_rprc(data):
+def elf_to_rprc(data: bytes) -> bytes:
     """Convert a TI armcl ELF32 executable's bytes to RPRC-encoded bytes.
     See the module docstring's "Stage 1" section for the exact format."""
     if data[4] != 1:
@@ -229,7 +238,7 @@ def elf_to_rprc(data):
 
     # Elf32_Phdr (32 bytes each): p_type, p_offset, p_vaddr, p_paddr,
     # p_filesz, p_memsz, p_flags, p_align.
-    segments = []
+    segments: list[ElfSegment] = []
     for i in range(e_phnum):
         off = e_phoff + i * e_phentsize
         (p_type, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_flags,
@@ -238,7 +247,7 @@ def elf_to_rprc(data):
 
     # Elf32_Shdr (40 bytes each): sh_name, sh_type, sh_flags, sh_addr,
     # sh_offset, sh_size, sh_link, sh_info, sh_addralign, sh_entsize.
-    def read_shdr(index):
+    def read_shdr(index: int) -> ElfSectionHeader:
         off = e_shoff + index * e_shentsize
         (sh_name, sh_type, sh_flags, sh_addr, sh_offset, sh_size, sh_link,
          sh_info, sh_addralign, sh_entsize) = struct.unpack_from(
@@ -251,14 +260,13 @@ def elf_to_rprc(data):
         # real count when there are too many sections for a 16-bit e_shnum.
         shnum = read_shdr(0)[3]
 
-    # Each entry: (load_addr, size, file_offset).
-    sections = []
+    sections: list[RprcSection] = []
     for i in range(shnum):
         sh_type, sh_addr, sh_offset, sh_size = read_shdr(i)
         if sh_size == 0 or sh_type != ELF_SHT_PROGBITS:
             continue
 
-        load_addr = None
+        load_addr: int | None = None
         for p_type, p_offset, p_vaddr, p_paddr, p_filesz in segments:
             if p_type != ELF_PT_LOAD or p_filesz == 0:
                 continue
@@ -301,21 +309,24 @@ def elf_to_rprc(data):
 # Stage 2: wrap core images in a meta-header
 # ---------------------------------------------------------------------------
 
-META_HDR_START = b"MSTR"  # SBL_META_HDR_START (0x5254534D) as LE bytes
-META_HDR_END = b"MEND"    # SBL_META_HDR_END   (0x444E454D) as LE bytes
+META_HDR_START: bytes = b"MSTR"  # SBL_META_HDR_START (0x5254534D) as LE bytes
+META_HDR_END: bytes = b"MEND"    # SBL_META_HDR_END   (0x444E454D) as LE bytes
 
-META_HDR_FIXED_SIZE = 24  # startMagic, numFiles, devId, hdrCRCHi/Lo, imageSize
-META_ENTRY_SIZE = 32      # fileType, magicWord, fileOffset, fileCRCHi/Lo, fileSize, 2 reserved
-META_HDR_TAIL_SIZE = 8    # shMemAlloc, endMagic
-META_ALIGN = 64
+META_HDR_FIXED_SIZE: int = 24  # startMagic, numFiles, devId, hdrCRCHi/Lo, imageSize
+META_ENTRY_SIZE: int = 32      # fileType, magicWord, fileOffset, fileCRCHi/Lo, fileSize, 2 reserved
+META_HDR_TAIL_SIZE: int = 8    # shMemAlloc, endMagic
+META_ALIGN: int = 64
+
+# (magic_word, content_bytes)
+CoreFile = tuple[int, bytes]
 
 
-def _align_up(n, align):
+def _align_up(n: int, align: int) -> int:
     remainder = n % align
     return n if remainder == 0 else n + (align - remainder)
 
 
-def build_meta_image(dev_id, shmem_alloc, core_files):
+def build_meta_image(dev_id: int, shmem_alloc: int, core_files: list[CoreFile]) -> bytes:
     """core_files is a list of (magic_word, content_bytes) pairs, in the
     order they should appear in the header/output. See the module
     docstring's "Stage 2" section for the exact format; CRC64 fields are
@@ -329,7 +340,7 @@ def build_meta_image(dev_id, shmem_alloc, core_files):
     # (needed in the header, written before any file content) is known up
     # front. Every file's region -- including the last -- is padded up to
     # the next 64-byte boundary, so this doubles as the running total size.
-    offsets = []
+    offsets: list[int] = []
     cursor = header_size
     for _magic_word, content in core_files:
         offsets.append(cursor)
@@ -368,16 +379,16 @@ def build_meta_image(dev_id, shmem_alloc, core_files):
 # Stage 3: fill in the CRC64 fields
 # ---------------------------------------------------------------------------
 
-CRC64_POLY = 0x000000000000001B
-CRC64_MASK = (1 << 64) - 1
+CRC64_POLY: int = 0x000000000000001B
+CRC64_MASK: int = (1 << 64) - 1
 
 
-def _build_crc64_table():
+def _build_crc64_table() -> list[int]:
     """Standard table-driven reformulation of an MSB-first, non-reflected
     CRC: table[i] is the bit-serial result of running the byte value `i`
     (placed in the top byte of the register) through the same shift/XOR
     steps calculate_crc64() below would perform one bit at a time."""
-    table = []
+    table: list[int] = []
     for i in range(256):
         crc = i << 56
         for _ in range(8):
@@ -387,10 +398,10 @@ def _build_crc64_table():
     return table
 
 
-_CRC64_TABLE = _build_crc64_table()
+_CRC64_TABLE: list[int] = _build_crc64_table()
 
 
-def calculate_crc64(data):
+def calculate_crc64(data: bytes) -> int:
     """Table-driven CRC64 exactly matching the real crc_multicore_image.exe
     and TI's SBL-side CRC64 hardware peripheral -- see the module
     docstring's "Stage 3" section. init=0, poly=0x1B, MSB-first, no
@@ -402,7 +413,7 @@ def calculate_crc64(data):
     return crc
 
 
-def insert_crcs(data):
+def insert_crcs(data: bytes) -> bytes:
     """Fill in a meta image's per-file and header CRC64 fields. Returns the
     updated bytes."""
     data = bytearray(data)
@@ -452,7 +463,7 @@ def insert_crcs(data):
 # Stage 4: append a trailing whole-file CRC32
 # ---------------------------------------------------------------------------
 
-def append_crc32(data):
+def append_crc32(data: bytes) -> tuple[bytes, int]:
     """Append a standard CRC-32/ISO-HDLC of `data` to itself, little-endian.
     See the module docstring's "Stage 4" section."""
     crc = zlib.crc32(data) & 0xFFFFFFFF
@@ -463,17 +474,18 @@ def append_crc32(data):
 # Pipeline + CLI
 # ---------------------------------------------------------------------------
 
-def parse_hex(arg):
+def parse_hex(arg: str) -> int:
     """Parse a CLI numeric argument as hex, with or without a "0x" prefix --
     this is what the real MulticoreImageGen.exe does for
     dev_id/shmem_alloc/core_id."""
     return int(arg, 16)
 
 
-def generate_flash_image(dev_id, shmem_alloc, core_files):
+def generate_flash_image(dev_id: int, shmem_alloc: int,
+                          core_files: list[tuple[int, str]]) -> bytes:
     """core_files is a list of (magic_word, file_path) pairs. Returns the
     final flashable image bytes."""
-    resolved = []
+    resolved: list[CoreFile] = []
     for magic_word, path in core_files:
         with open(path, "rb") as f:
             content = f.read()
@@ -493,7 +505,7 @@ def generate_flash_image(dev_id, shmem_alloc, core_files):
     return image
 
 
-def main():
+def main() -> None:
     argv = sys.argv[1:]
     if len(argv) < 5 or len(argv) % 2 != 1:
         sys.stderr.write(
@@ -506,8 +518,9 @@ def main():
     output_file = argv[2]
 
     pair_args = argv[3:]
-    core_files = [(parse_hex(pair_args[i]), pair_args[i + 1])
-                  for i in range(0, len(pair_args), 2)]
+    core_files: list[tuple[int, str]] = [
+        (parse_hex(pair_args[i]), pair_args[i + 1])
+        for i in range(0, len(pair_args), 2)]
 
     image = generate_flash_image(dev_id, shmem_alloc, core_files)
     with open(output_file, "wb") as f:
