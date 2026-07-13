@@ -1,6 +1,11 @@
 # Prerequisites
 *.d
 
+# Python bytecode cache (from running/importing cmake/*.py directly)
+__pycache__/
+*.pyc
+.mypy_cache/
+
 # Object files
 *.o
 *.ko
