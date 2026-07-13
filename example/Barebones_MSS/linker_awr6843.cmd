@@ -1,7 +1,7 @@
 /*----------------------------------------------------------------------------*/
 /* XWR68XX.cmd                                                                */
 /*                                                                            */
-/* (c) Texas Instruments 2016, All rights reserved.                           */
+/* (c) Texas Instruments 2016, All rights reserved.                          */
 /*                                                                            */
 
 /* USER CODE BEGIN (0) */
@@ -11,11 +11,20 @@
 /*----------------------------------------------------------------------------*/
 /* Linker Settings                                                            */
 --retain="*(.intvecs)"
-/* No bare-metal boot has ever been proven to boot on this AWR6843AOP board's */
-/* SBL -- SYS/BIOS's own startup (linked in via sysbios.aer4f) provides the   */
-/* vector table and does essential bring-up (MPU config via SOC_init()) that  */
-/* a hand-rolled bare-metal reset trampoline could not replicate. See         */
-/* AWR6xxx_Toolchain memory notes / project history for the long story.       */
+/* Bare-metal boot (no SYS/BIOS) -- see src/startup_awr6843.asm's file header  */
+/* and the AWR6xxx_Toolchain memory note on xdctools/configuro's generated     */
+/* output. Earlier bare-metal attempts left Abort/Undefined-mode stacks        */
+/* uninitialized and never reset VIM/cleared ESM; this project's startup       */
+/* trampoline does both before calling main(). Confirmed booting on real       */
+/* hardware.                                                                   */
+
+/* .stack is declared as a zero-size .usect in startup_awr6843.asm (the RTS   */
+/* boot convention) -- this -stack directive is what actually reserves 0x1000 */
+/* bytes for it. Must match __STACK_SIZE's .set value in that file exactly:   */
+/* the linker grows .stack to (at least) this size, while the asm file        */
+/* computes sp = __stack + __STACK_SIZE independently: two different sources  */
+/* for the same number, kept in sync by convention, not by a shared symbol.   */
+-stack 0x1000
 
 /*----------------------------------------------------------------------------*/
 /* Memory Map                                                                 */
@@ -38,7 +47,5 @@ SECTIONS{
     .bss     : {} > DATA_RAM
     .data    : {} > DATA_RAM
     .stack   : {} > DATA_RAM ALIGN(32)
-    systemHeap : {} > DATA_RAM
 }
 /*----------------------------------------------------------------------------*/
-

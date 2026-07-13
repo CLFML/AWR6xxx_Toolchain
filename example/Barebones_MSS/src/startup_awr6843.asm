@@ -3,7 +3,7 @@
 ;
 ; Minimal bare-metal boot for the AWR6843 MSS (Cortex-R4F).
 ;
-; Third attempt. The first two (see Barebones_MSS's git history and
+; Third attempt. The first two (see this project's own git history and the
 ; AWR6xxx_Toolchain memory notes) both jumped straight into the standard TI
 ; RTS's _c_int00 after minimal setup, and both hit a reliable data abort on
 ; the first MSS peripheral register access after boot -- never root-caused,
@@ -29,7 +29,7 @@
 ; This file explicitly replicates both of those steps, plus sets up IRQ/FIQ
 ; mode stacks too (cheap insurance, even though interrupts are never enabled
 ; in this minimal example -- Universal_hal's esm_init() needs SYS/BIOS's
-; Hwi_create() and isn't used here).
+; Hwi_create() and isn't used here). Confirmed booting on real hardware.
 ;
 ; MPU: earlier attempts left the MPU disabled (flat, full-access) rather
 ; than porting TI's SOC_mpu_config() region table. That table has since been
@@ -136,7 +136,7 @@ _resetEntry:
         ;* with User mode banking; this program never enters
         ;* User mode). __stack/__STACK_SIZE come from the RTS
         ;* boot convention (linker-provided, see linker_awr6843.cmd's
-        ;* -stack_size and boot.asm's own use of the same symbols).
+        ;* -stack directive and boot.asm's own use of the same symbols).
         ;*------------------------------------------------------
         MRS   r0, cpsr
         BIC   r0, r0, #0x1F

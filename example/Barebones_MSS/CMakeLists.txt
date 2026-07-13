@@ -24,28 +24,21 @@ cmake_minimum_required(VERSION 3.14)
 #
 # Set this path to the ti-cgt-arm toolchain (it is already set for default Linux install path)
 set(TI_CGT_ROOT $ENV{HOME}/ti/ti-cgt-arm_16.9.6.LTS)
-# Set this path to the mmWave SDK.
-# Deliberately mmwave_sdk_03_04_00_03, NOT the 03_06_02_00-LTS install under
-# $HOME/ti -- this is the exact SDK version (different compiled
-# libgpio/libuart/... binaries, and firmware/ImageCreator tooling) that a
-# project confirmed booting on this exact board links against/uses. None of
-# GPIO/pinmux/UART/SOC/ESM link against this SDK's precompiled drivers
-# anymore (see Universal_hal below) -- only the image-gen step still uses
-# this SDK's RadarSS firmware/tools. Swapping to another SDK install here is
-# an untested variable; match this path exactly unless you've verified
-# otherwise.
+# Set this path to the mmWave SDK. Only used for RadarSS firmware/ImageCreator
+# tooling here -- nothing in this project links against the mmWave SDK's
+# precompiled drivers (GPIO/pinmux/UART/SOC/ESM all go through Universal_hal,
+# see below).
 set(TI_MMWAVE_PATH /mnt/3c8641a4-f089-425f-b228-e740a9f7575e/ti/mmwave_sdk_03_04_00_03)
 
-# This example runs on a minimal SYS/BIOS (TI-RTOS) rather than being truly
-# bare-metal. That's deliberate, not an oversight: no hand-rolled bare-metal
-# boot has ever been proven to boot on the AWR6843AOP board this was
-# developed against -- SYS/BIOS's own startup does essential bring-up that a
-# from-scratch reset handler could not practically replicate.
-set(USE_TI_RTOS ON)
-set(TI_RTOS_PATH $ENV{HOME}/ti/bios_6_73_01_01)
-set(TI_XDC_PATH $ENV{HOME}/ti/xdctools_3_50_08_24_core)
-set(TI_RTOS_CONFIG ${CMAKE_CURRENT_LIST_DIR}/mss_rtos.cfg)
-
+# This project is genuinely bare-metal -- no SYS/BIOS, no xdc_gen, and (as of
+# UHAL_DISABLE_ESM_MODULE below) no SYS/BIOS/XDCtools install needed at all.
+# USE_TI_RTOS is deliberately left OFF/unset (R4F-toolchain.cmake's default):
+# no xdc_gen custom target gets created, nothing links sysbios.aer4f or a
+# generated configPkg linker.cmd. See src/startup_awr6843.asm's file header
+# for why this is expected to work where two earlier bare-metal attempts
+# (see this project's own git history) didn't -- confirmed booting on real
+# hardware.
+#
 # This path should not be altered, this is the linker file
 set(TI_LINKER_CMD ${CMAKE_CURRENT_LIST_DIR}/linker_awr6843.cmd)
 
@@ -63,40 +56,33 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/R4F-toolchain.cmake)
 
 project(barebones_mss C ASM)
 
-# Enable ASM language support, as there is a lot of ASM in the toolchain
+# Enable ASM language support -- src/startup_awr6843.asm is this project's
+# vector table + reset trampoline, there is no SYS/BIOS-provided one.
 enable_language(ASM)
 
 # CMake's own bundled TI compiler support (Modules/Compiler/TI.cmake) links
 # executables via "armcl <FLAGS> --run_linker --output_file=<TARGET> ...".
 # That mode silently rejects several linker options as invalid (e.g.
 # --code_state=16/--float_support=VFPv3D16, ignored with a warning) and, in
-# this project, produced a linked .xer4f malformed enough that out2rprc.exe
-# crashed with an unhandled .NET exception parsing it -- a corrupt image was
-# still emitted, no build error. TI's classic implicit-link invocation
-# ("armcl ... -z -m <map> ... -o <target> ...", the style CCS-exported
-# Makefiles use) does not have this problem: isolating this exact difference
-# reproduced the confirmed-working image byte-for-byte. Override CMake's link
-# rule to use that style for this project.
+# this project, produced a linked .xer4f malformed enough that the image-gen
+# tooling choked on it -- while CMake still reports a "successful" build.
+# TI's classic implicit-link invocation ("armcl ... -z -m <map> ... -o
+# <target> ...", the style CCS-exported Makefiles use) does not have this
+# problem. Override CMake's link rule to use that style for this project.
 set(CMAKE_C_LINK_EXECUTABLE "<CMAKE_C_COMPILER> <FLAGS> -z -m <TARGET_NAME>.map <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
 
 # Same class of bug as the link rule above: CMake's bundled TI compiler
 # support compiles via "armcl --compile_only --c_file=<SOURCE> ...
 # --output_file=<OBJECT>". That combination produces an object file that
 # links and runs, but is subtly non-functional on real hardware (confirmed by
-# isolating this exact difference: relinking a proven-working object through
-# this project's own verified-correct link/configPkg/sysbios environment
-# worked, while an object compiled via CMake's default rule from identical
-# source did not). Dropping --compile_only/--c_file= in favor of the CCS
-# Makefile style (flags first, --output_file=<OBJECT>, then the source
-# positionally) produces byte-identical code (confirmed via disassembly diff
-# -- only an embedded filename and a random compiler-internal build tag
-# differ).
+# isolating this exact difference). Dropping --compile_only/--c_file= in
+# favor of the CCS Makefile style (flags first, --output_file=<OBJECT>, then
+# the source positionally) produces byte-identical code.
 set(CMAKE_C_COMPILE_OBJECT "<CMAKE_C_COMPILER> <DEFINES> <INCLUDES> <FLAGS> --output_file=<OBJECT> <SOURCE>")
 
-# GPIO/pinmux/UART/SOC now go through Universal_hal (vendored in
+# GPIO/pinmux/UART/SOC all go through Universal_hal (vendored in
 # Universal_hal/, gitignored -- see that directory's own git remote) instead
-# of the mmWave SDK's precompiled ti/drivers/gpio, ti/drivers/pinmux,
-# ti/drivers/uart, ti/drivers/soc.
+# of the mmWave SDK's precompiled ti/drivers/*.
 # PLATFORM_DEFINED selects Universal_hal's own CMakeLists.txt branch that
 # builds hal/platform/ti/iwr68xx/{gpio,pinmux,uart,soc}; matched against
 # "^SOC_XWR68", not tied to any variable this project already defines
@@ -108,49 +94,31 @@ set(CMAKE_C_COMPILE_OBJECT "<CMAKE_C_COMPILER> <DEFINES> <INCLUDES> <FLAGS> --ou
 # them -- relies on something else in the translation unit doing so first.
 # Untested with this SDK version; skip it rather than risk an implicit-
 # declaration error under --c99. Losing that interrupt-safety window is
-# fine for this single-task blink+hello example. (esm_iwr68xx.c is the one
-# exception -- it #includes SYS/BIOS's own Hwi.h directly, see below.)
+# fine for this single-task blink+hello example.
+#
+# ESM is disabled outright: esm_init() is never called from this bare-metal
+# main() (it needs SYS/BIOS's Hwi_create() to install the FIQ/IRQ handlers,
+# see src/main.c), and esm_iwr68xx.c is the one Universal_hal source file
+# for this platform that #includes SYS/BIOS's own Hwi.h -- without this,
+# Universal_hal's build would require a SYS/BIOS/XDCtools install just to
+# satisfy an #include this project never exercises.
 set(PLATFORM_DEFINED "SOC_XWR68XX" CACHE STRING "" FORCE)
+set(UHAL_DISABLE_ESM_MODULE ON CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/Universal_hal Universal_hal-build)
 # Universal_hal's own TI source (gpio_iwr68xx.c etc.) includes <AWR6843.h>
 # and friends -- those live in this project's include/, not in
 # Universal_hal itself, so its own compilation needs this path too, not
-# just main.c's. esm_iwr68xx.c additionally needs SYS/BIOS's own
-# <ti/sysbios/family/arm/v7r/vim/Hwi.h> (it registers the ESM FIQ/IRQ
-# through SYS/BIOS's Hwi_create(), the only way to hook those vectors when
-# SYS/BIOS owns the vector table) and <xdc/runtime/Error.h> -- both are
-# plain pre-built headers from the RTOS/XDC package installs, not something
-# generated per-project, so no xdc_gen dependency is needed for this,
-# unlike main.c's <package/cfg/mss_rtos_per4f.h>.
-target_include_directories(Universal_hal PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
-                                                 ${TI_RTOS_PATH}/packages
-                                                 ${TI_XDC_PATH}/packages)
+# just main.c's.
+target_include_directories(Universal_hal PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
 
 # New MSS executable
-add_executable(mss_program.xer4f src/main.c)
-add_dependencies(mss_program.xer4f xdc_gen)
+add_executable(mss_program.xer4f src/main.c src/startup_awr6843.asm)
 target_link_libraries(mss_program.xer4f
-                      ${CMAKE_CURRENT_LIST_DIR}/src/sysbios/sysbios.aer4f
-                      ${XDC_OUTPUT_DIR}/package/cfg/mss_rtos_per4f.oer4f
                       Universal_hal
                       # Must come LAST -- see TI_DEFER_RTS_LIBS comment above.
                       ${TI_RTS_LIB}
                       ${TI_LIBC_LIB})
-include_directories(${XDC_OUTPUT_DIR}
-                    ${TI_RTOS_PATH}/packages
-                    ${TI_XDC_PATH}/packages) # Include generated headers
 
-# _LITTLE_ENDIAN, DOWNLOAD_FROM_CCS, DebugP_ASSERT_ENABLED, and the
-# --define=MMWAVE_L3RAM_NUM_BANK/MMWAVE_SHMEM_*/MMWAVE_L3RAM_SIZE linker
-# symbols used to matter here: they fed the mmWave SDK's precompiled
-# libsoc_xwr68xx.aer4f's own SOC_deviceInit() sanity-check asserts (L3RAM/
-# TCMA/TCMB bank counts against the actual hardware config) and libosal's
-# DebugP_assert plumbing. Now that GPIO/pinmux/UART/SOC/ESM are all ported
-# to Universal_hal and none of the mmWave SDK's precompiled driver
-# libraries are linked anymore, none of that code exists in this image to
-# consume them -- confirmed by removing them and getting a byte-identical
-# rebuild (same CRC32, same size). Left out rather than kept as
-# now-meaningless cruft.
 target_compile_options(mss_program.xer4f PRIVATE
     -O3
     --c99
@@ -158,6 +126,16 @@ target_compile_options(mss_program.xer4f PRIVATE
 )
 target_link_options(mss_program.xer4f PRIVATE
     --disable_auto_rts
+    # R4F-toolchain.cmake's --rom_model (added unconditionally) makes the
+    # linker require resolving the standard entry symbol _c_int00,
+    # regardless of whether anything actually calls it -- and since
+    # ${TI_RTS_LIB} is linked (for libc/intrinsics), the linker pulls in
+    # that library's boot.obj to satisfy it, which _also_ defines __stack
+    # (the standard RTS boot convention name, same one this project's own
+    # src/startup_awr6843.asm uses) -> duplicate-symbol link error. Override
+    # the entry point to this project's own _resetEntry so _c_int00 is never
+    # required and boot.obj never gets pulled in.
+    --entry_point=_resetEntry
 )
 
 # ---------------------------------------------------------------------------
@@ -174,13 +152,8 @@ target_link_options(mss_program.xer4f PRIVATE
 # cmake/gen_flash_image.py, a single pure-Python script covering the whole
 # ELF->RPRC->meta-image->CRC64->CRC32 pipeline in memory (no mono, no wine,
 # no intermediate files). No TI format spec exists for any of these
-# stages; each was reverse-engineered separately (IL disassembly for the
-# one .NET tool; objdump/Unicorn-emulated disassembly plus the SBL's own C
-# reader source in ti/utils/sbl/ for the three native-PE tools) -- see
-# gen_flash_image.py's module docstring for exactly what was verified and
-# how. The combined output was confirmed byte-for-byte identical (same
-# CRC32) to the hardware-confirmed image the original 4-tool mono/wine
-# pipeline produced, before being wired in here.
+# stages; each was reverse-engineered separately -- see gen_flash_image.py's
+# module docstring for exactly what was verified and how.
 #
 # The DSS component (prebuilt/placeholder_dss.bin) is a placeholder reused
 # from a project confirmed booting on this exact board -- this MSS-only

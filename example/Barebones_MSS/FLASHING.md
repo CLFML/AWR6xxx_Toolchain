@@ -3,26 +3,19 @@
 No debugger required. You flash the generated image into the on-board serial
 (QSPI) flash over USB, then let the ROM bootloader run it.
 
-**Right now this is a byte-for-byte copy of `example/TI_RTOS_MSS`.** That
-project is the known-good reference (leave it alone); this one is the working
-copy meant to be progressively stripped down towards true bare-metal (no
-RTOS). Expect this file and the source to diverge from `TI_RTOS_MSS` over
-time as that stripping happens.
-
-This example currently boots on a minimal SYS/BIOS (TI-RTOS), not bare-metal.
-That's a deliberate starting point, not an oversight: no hand-rolled
-bare-metal boot (custom vector table + reset trampoline, no RTOS at all) was
-ever proven to boot on the AWR6843AOP board this was developed against.
-SYS/BIOS's own startup does essential low-level bring-up -- `SOC_init()` in
-`src/main.c` configures the MPU, among other things -- that a from-scratch
-reset handler could not practically replicate blind, without a JTAG debugger
-to observe where it was failing. Removing that dependency piece by piece is
-exactly the work this copy exists for.
+This example is genuinely bare-metal: no SYS/BIOS, no RTOS at all -- its own
+`src/startup_awr6843.asm` supplies the vector table and reset trampoline.
+Two earlier attempts at this both hit a reliable data abort on the first MSS
+peripheral register access after boot and were abandoned; this one fixes
+that by explicitly initializing the Abort/Undefined-mode banked stack
+pointers and resetting the VIM/clearing ESM before `main()` runs (see that
+file's header comment, and the AWR6xxx_Toolchain memory notes, for the full
+story). Confirmed booting on real hardware.
 
 ## What gets built
 
 ```
-build/mss_program.xer4f   ELF (R4F/MSS, SYS/BIOS-linked) - not directly bootable
+build/mss_program.xer4f   ELF (R4F/MSS) - not directly bootable
 build/barebones_mss.bin   <-- FLASH THIS. Multicore metaimage: MSS app + RadarSS
                               firmware + a DSS placeholder, CRC-protected.
 ```
@@ -38,29 +31,16 @@ CRCs automatically.
 ```bash
 cd example/Barebones_MSS
 cmake -G Ninja -S . -B build
-cmake --build build --target xdc_gen   # first time only, see note below
 cmake --build build
 # -> build/barebones_mss.bin
 ```
 
-On a truly clean `build/` directory, the plain `cmake --build build` can fail
-with `'configPkg/package/cfg/mss_rtos_per4f.oer4f' ... missing and no known
-rule to make it` -- `xdc_gen`'s output isn't strictly ordered before the link
-step in the shared toolchain's ninja graph. Building the `xdc_gen` target
-explicitly once (as above) works around it; after that, plain `cmake --build
-build` is fine for incremental builds.
-
-The first `xdc_gen` run compiles a full SYS/BIOS library from source (via XDC
-configuro) into `src/sysbios/`, which takes noticeably longer than a bare
-compile; subsequent builds reuse it.
-
 Requires (already installed on this machine):
-- `ti-cgt-arm_16.9.6.LTS`, `mmwave_sdk_03_04_00_03`, `bios_6_73_01_01`,
-  `xdctools_3_50_08_24_core` (paths at the top of `CMakeLists.txt` -- note the
-  SDK path is deliberately `03_04_00_03`, not the `03_06_02_00-LTS` install
-  also present on this machine, see the comment there)
-- `mono`  (runs TI's `out2rprc` .NET tool)
-- `wine`  (runs TI's native-Win32 `MulticoreImageGen` / CRC tools)
+- `ti-cgt-arm_16.9.6.LTS`, `mmwave_sdk_03_04_00_03` (paths at the top of
+  `CMakeLists.txt` -- note the SDK path is deliberately `03_04_00_03`, not
+  the `03_06_02_00-LTS` install also present on this machine)
+- `python3` (runs `cmake/gen_flash_image.py`, the image-generation pipeline
+  -- pure standard library, no pip packages, no mono/wine)
 
 ## Flash it (UniFlash, ~2 minutes)
 
@@ -107,11 +87,13 @@ If you prefer scripting over the GUI, TI's Dfu/`uniflash` CLI works too:
   change.
 - **UniFlash "Can't connect":** wrong COM port, or the board is not in SOP 101.
 - **LED lights solid but never blinks, no console text:** `main()` reached the
-  LED write (right before `UART_init()`/`UART_open()` in `BlinkHelloTask`) but
-  is hung opening the UART. Check the UART pinmux/pad values in `src/main.c`
-  against your board's schematic if you're on different hardware.
-- **LED blinks but no console text:** `UART_open()` succeeded but
-  `UART_write()` isn't reaching the terminal -- check you're on the
+  LED write (right before `uhal_uart_init()`) but is hung initializing the
+  UART, or `soc_init()` itself failed (in which case the LED stays solid
+  *off* instead -- see `src/main.c`). Check the UART pinmux/pad values in
+  `src/main.c` against your board's schematic if you're on different
+  hardware.
+- **LED blinks but no console text:** `uhal_uart_init()` succeeded but
+  `uhal_uart_transmit()` isn't reaching the terminal -- check you're on the
   Application/User UART COM port (not the logging one) at 115200 8N1.
 - **Nothing at all, not even the LED:** the image likely isn't booting/running
   at all. Double check the SOP mode and that the flash actually completed
