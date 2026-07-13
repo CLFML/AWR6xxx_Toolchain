@@ -22,15 +22,6 @@
 *  World!" over the MSS Control UART (MSS_UARTA), to prove the image boots
 *  and runs on the radar with no debugger.
 *
-*  This runs on top of a minimal SYS/BIOS (TI-RTOS) rather than being truly
-*  bare-metal. That's a deliberate, hard-won choice, not an oversight: no
-*  hand-rolled bare-metal boot (custom vector table + reset trampoline) has
-*  ever been proven to boot on this AWR6843AOP board. SYS/BIOS's own startup
-*  (linked in via sysbios.aer4f) does essential bring-up -- SOC_init() below
-*  configures the MPU, among other things -- that a from-scratch reset
-*  handler could not practically replicate. See the project's AWR6xxx_Toolchain
-*  memory notes for the long debugging history behind this.
-*
 *  UART pin mapping, cross-checked against the AWR6843AOPEVM schematic
 *  (PROC091G), the mmWave SDK's pinmux_xwr68xx.h, and a firmware project
 *  independently confirmed booting on this exact board:
@@ -42,114 +33,231 @@
 *
 *  The GPIO_2 LED pin (K13/PADAZ, == ball K3 on the AOP package) is the same
 *  pin the mmWave out-of-box demo uses for its sensor-status LED.
+*
+*  --- Stripping RTOS piece 1/N: UART_write() -> UART_writePolling() ---
+*  --- Stripping RTOS piece 2/N: Task_sleep() -> busy-wait delay() ---
+*  --- Stripping RTOS piece 3/N: Task_create()/BIOS_start() removed ---
+*  (see git history for the full reasoning behind pieces 1-3, done while
+*  this file was still built on top of SYS/BIOS)
+*
+*  --- Stripping RTOS piece 4/N: sysbios.aer4f dropped entirely ---
+*  This is the last RTOS piece: no SYS/BIOS link, no XDC/configuro, no
+*  ti/drivers SDK calls -- src/startup_awr6843.asm now provides the vector
+*  table and reset trampoline directly, and every register access below is
+*  hand-written instead of going through the SDK's SOC/GPIO/UART/Pinmux
+*  drivers.
+*
+*  Why this is expected to work now, when the very first bare-metal attempt
+*  on this file wasn't: that attempt was debugged *before* two unrelated bugs
+*  were found and fixed -- CMake's default TI link mode silently corrupting
+*  the output, and rts.lib/libc.a needing to be linked after (not before) the
+*  objects that reference them. Both were blamed at the time on "bare-metal
+*  boot doesn't work on this board", which disassembly of the later
+*  SYS/BIOS-based reference build has since disproven: that build's own
+*  .vecs table points straight at _c_int00 (no custom trampoline of its own),
+*  Core_resetC (the one XDC-generated function that looked like it might be
+*  doing hidden essential setup) is dead code nothing calls, and _c_int00
+*  itself already enables VFP. None of that ever depended on SYS/BIOS being
+*  linked in.
+*
+*  The one genuinely essential thing SOC_init() did that this file must
+*  still replicate is bssClockInit() below: bringing the BSS (radar
+*  front-end) out of reset/clock-gate/halt and waiting for its APLL to lock,
+*  which is the only way VCLK actually reaches 200MHz. Two things SOC_init()
+*  also did are deliberately *not* replicated, as a simplification reasonable
+*  for this educational blink+UART example:
+*    - SOC_mpu_config()'s full 11+-region MPU setup. The reset trampoline
+*      (startup_awr6843.asm) simply leaves the MPU disabled instead, which is
+*      a functional superset of any individual region's access rights and
+*      has no cache/shareability-sensitive code path here to protect against.
+*    - ESM_init(): configures/clears the Error Signaling Module's fault
+*      interrupts. Nothing in this program depends on ESM fault reporting.
+*
+*  Precompiled SDK drivers (libsoc/libuart/libgpio/libpinmux) could not be
+*  reused for this piece even if wanted: they're hard-linked against
+*  libosal's TI-RTOS variant, which calls real SYS/BIOS Hwi_disable()/
+*  Hwi_create() directly, and this SDK version ships no non-RTOS OSAL
+*  alternative. Hence hand-written registers below instead of just dropping
+*  ti/drivers includes.
 */
-#include <package/cfg/mss_rtos_per4f.h>
-#include <xdc/runtime/System.h>
-#include <ti/sysbios/BIOS.h>
-#include <ti/sysbios/knl/Task.h>
-#include <ti/drivers/esm/esm.h>
-#include <ti/drivers/soc/soc.h>
-#include <ti/drivers/pinmux/pinmux.h>
-#include <ti/drivers/gpio/gpio.h>
-#include <ti/drivers/uart/UART.h>
-#include <ti/common/sys_common.h>
-#include <string.h>
+#include "AWR6843.h"
+#include <stdint.h>
 
-void BlinkHelloTask(UArg arg0, UArg arg1)
+/* Pad numbers + function-select values, from the mmWave SDK's
+ * pinmux_xwr68xx.h (SOC_XWR68XX_PIN*_PAD**, SOC_XWR68XX_PIN*_PAD**_<signal>)
+ * -- reused as plain numbers here since that header is part of the SDK we're
+ * no longer linking against. */
+#define PAD_UARTA_TX       30U   /* N5/PADBE  -> MSS_UARTA_TX */
+#define PAD_UARTA_TX_FUNC   5U
+#define PAD_UARTA_RX       29U   /* N4/PADBD  -> MSS_UARTA_RX */
+#define PAD_UARTA_RX_FUNC   2U
+#define PAD_GPIO_2         25U   /* K13/PADAZ -> GPIO_2 */
+#define PAD_GPIO_2_FUNC     1U
+
+/* GPIO_2 == GPIO_CREATE_INDEX(0, 2) in the SDK (gpio_xwr68xx.h): GIO port A,
+ * pin 2. */
+#define GPIO_LED_PORT 0U
+#define GPIO_LED_PIN  2U
+
+/* MSS_UARTA runs off VCLK, brought to 200MHz by bssClockInit() below --
+ * matches the SDK's sys_common_xwr68xx_mss.h MSS_SYS_VCLK. */
+#define VCLK_HZ      200000000U
+#define UART_BAUD    115200U
+
+/* IOMUX unlock/lock sequence -- ti/drivers/pinmux/src/pinmux.c's
+ * Pinmux_Unlock()/Pinmux_Lock(), reused verbatim (magic key values are
+ * fixed by the hardware, not something to rederive). */
+#define IOMUX_KICK0_UNLOCK 0x83E70B13U
+#define IOMUX_KICK1_UNLOCK 0x95A4F1E0U
+
+#define PADCFG_FUNC_SEL_MASK    0xFU
+#define PADCFG_IE_OVERRIDE_CTRL (1U << 4)
+#define PADCFG_OE_OVERRIDE_CTRL (1U << 6)
+
+static void delay(volatile uint32_t count)
 {
-    UART_Params uartParams;
-
-    /* UART pinmux: N5/PADBE -> MSS_UARTA_TX, N4/PADBD -> MSS_UARTA_RX */
-    Pinmux_Set_OverrideCtrl(SOC_XWR68XX_PINN5_PADBE, PINMUX_OUTEN_RETAIN_HW_CTRL, PINMUX_INPEN_RETAIN_HW_CTRL);
-    Pinmux_Set_FuncSel(SOC_XWR68XX_PINN5_PADBE, SOC_XWR68XX_PINN5_PADBE_MSS_UARTA_TX);
-    Pinmux_Set_OverrideCtrl(SOC_XWR68XX_PINN4_PADBD, PINMUX_OUTEN_RETAIN_HW_CTRL, PINMUX_INPEN_RETAIN_HW_CTRL);
-    Pinmux_Set_FuncSel(SOC_XWR68XX_PINN4_PADBD, SOC_XWR68XX_PINN4_PADBD_MSS_UARTA_RX);
-
-    /* LED pinmux: K13/PADAZ -> GPIO_2 */
-    Pinmux_Set_OverrideCtrl(SOC_XWR68XX_PINK13_PADAZ, PINMUX_OUTEN_RETAIN_HW_CTRL, PINMUX_INPEN_RETAIN_HW_CTRL);
-    Pinmux_Set_FuncSel(SOC_XWR68XX_PINK13_PADAZ, SOC_XWR68XX_PINK13_PADAZ_GPIO_2);
-
-    /* Every ti.drivers module needs its own _init() before _open()/other
-     * API calls -- easy to miss, and skipping it doesn't error, it just
-     * hangs forever with no diagnostic (this exact omission cost an entire
-     * debugging session). GPIO_init() specifically releases the GIO module
-     * from reset; nothing else in the boot path does that either. */
-    GPIO_init();
-    GPIO_setConfig(SOC_XWR68XX_GPIO_2, GPIO_CFG_OUTPUT);
-
-    /* Diagnostic value: light the LED solid before touching UART. If
-     * UART_open() below were ever to hang again, this distinguishes "never
-     * reached this task" from "stuck opening the UART". */
-    GPIO_write(SOC_XWR68XX_GPIO_2, 1U);
-
-    UART_init();
-
-    UART_Params_init(&uartParams);
-    uartParams.clockFrequency = MSS_SYS_VCLK;
-    uartParams.baudRate       = 115200U;
-    uartParams.isPinMuxDone   = 1U;
-
-    UART_Handle uartHandle = UART_open(0, &uartParams);
-    if (uartHandle == NULL)
-    {
-        System_printf("Error: BlinkHelloTask unable to open the Command UART Instance\n");
-        return;
+    while (count) {
+        count--;
     }
+}
+
+/* Mux `pad` to `func` and leave its input/output buffer enable under
+ * hardware (peripheral) control, i.e. the same "RETAIN_HW_CTRL" mode every
+ * pin in this example used under the SDK's Pinmux_Set_OverrideCtrl(). Ports
+ * Pinmux_Set_FuncSel() + Pinmux_Set_OverrideCtrl() (ti/drivers/pinmux/src/
+ * pinmux.c) down to the one field + two bits they actually change together
+ * for that specific combination of arguments. Uses the raw .reg member
+ * (not the .bit sub-fields) throughout so behavior only depends on the
+ * documented bit offsets/masks, not on how the compiler happens to pack a C
+ * bitfield. */
+static void pinmuxSetFunc(uint32_t pad, uint32_t func)
+{
+    IOMUX->IOCFGKICK0 = IOMUX_KICK0_UNLOCK;
+    IOMUX->IOCFGKICK1 = IOMUX_KICK1_UNLOCK;
+
+    IOMUX->PADxx_CFG_REG[pad].reg =
+        (IOMUX->PADxx_CFG_REG[pad].reg &
+         ~(PADCFG_FUNC_SEL_MASK | PADCFG_IE_OVERRIDE_CTRL | PADCFG_OE_OVERRIDE_CTRL)) |
+        (func & PADCFG_FUNC_SEL_MASK);
+
+    IOMUX->IOCFGKICK1 = 0U;
+    IOMUX->IOCFGKICK0 = 0U;
+}
+
+/* Bring the BSS (radar front-end) out of reset/clock-gate/halt and wait for
+ * its APLL to lock -- ported from SOC_init()/SOC_ungateClock()/
+ * SOC_unhaltBSS()/SOC_waitAPLLCalibration() (ti/drivers/soc/src/soc.c,
+ * platform/soc_xwr68xx.c). Those four functions together only ever clear
+ * BSSCTL's clock-gate/pclock-gate/reset/halt fields to 0, so a single
+ * BSSCTL=0 write reaches the same end state as all four combined -- see
+ * AWR6843_TOPRCM.h's header comment for the same simplification. */
+static void bssClockInit(void)
+{
+    TOP_RCM->BSSCTL = 0U;
+    TOP_RCM->SPARE0 &= 0x0000FFFFU;
+    while ((TOP_RCM->SPARE0 & TOPRCM_SPARE0_APLL_CAL_MASK) != TOPRCM_SPARE0_APLL_CAL_DONE)
+    {
+    }
+}
+
+static void gpioLedInit(void)
+{
+    pinmuxSetFunc(PAD_GPIO_2, PAD_GPIO_2_FUNC);
+
+    /* GIO_init() in the SDK (gpio.c) also zeroes DIR/DOUT on every other
+     * port; skipped here since we never touch those pins and their POR
+     * reset state is already input/low. */
+    GIO->GIOGCR.reg = 1U;                                          /* release GIO module from reset */
+    GIO->GIOPORT[GPIO_LED_PORT].GIODIR.reg |= (1U << GPIO_LED_PIN); /* pin -> output */
+}
+
+static void gpioLedWrite(uint32_t level)
+{
+    if (level)
+    {
+        GIO->GIOPORT[GPIO_LED_PORT].GIODSET.reg = (1U << GPIO_LED_PIN);
+    }
+    else
+    {
+        GIO->GIOPORT[GPIO_LED_PORT].GIODCLR.reg = (1U << GPIO_LED_PIN);
+    }
+}
+
+/* Bring up MSS_UARTA at 115200 8N1, no interrupts -- register sequence
+ * ported from UartSci_open() (ti/drivers/uart/src/uartsci.c), keeping only
+ * what a single fixed-config polling UART instance needs (drops DMA setup,
+ * semaphores, and Hwi/ISR registration -- all scheduler-only concerns that
+ * piece 1/N already established this example doesn't need). */
+static void uartInit(void)
+{
+    pinmuxSetFunc(PAD_UARTA_TX, PAD_UARTA_TX_FUNC);
+    pinmuxSetFunc(PAD_UARTA_RX, PAD_UARTA_RX_FUNC);
+
+    SCI_A->SCIGCR0 = 0U;
+    SCI_A->SCIGCR0 = 1U;                 /* bring SCI out of reset */
+
+    SCI_A->SCIGCR1 = 0U;                 /* sleep state while configuring */
+    SCI_A->SCICLEARINT    = 0xFFFFFFFFU;
+    SCI_A->SCICLEARINTLVL = 0xFFFFFFFFU;
+
+    /* Rx/Tx enabled, internal clock, asynchronous timing mode; 1 stop bit
+     * and no parity are the reset value of their bits already. */
+    SCI_A->SCIGCR1 = SCIGCR1_TXENA | SCIGCR1_RXENA | SCIGCR1_CLOCK | SCIGCR1_TIMING_MODE;
+
+    SCI_A->SCIBAUD = VCLK_HZ / (16U * (UART_BAUD + 1U));
+    SCI_A->SCICHAR = 7U;                 /* 8 data bits */
+
+    SCI_A->SCIPIO0 = SCIPIO_RX_BIT | SCIPIO_TX_BIT; /* pins under SCI, not GPIO, control */
+    SCI_A->SCIPIO1 = 0U;                            /* driven by the SCI module, not sw */
+    SCI_A->SCIPIO3 = 0U;
+    SCI_A->SCIPIO6 = 0U;                            /* push-pull, no open drain */
+    SCI_A->SCIPIO7 = 0U;
+    SCI_A->SCIPIO8 = SCIPIO_RX_BIT | SCIPIO_TX_BIT; /* pull up when idle */
+
+    SCI_A->SCIGCR1 |= SCIGCR1_SW_NRESET;            /* start the SCI */
+}
+
+static void uartWritePolling(const uint8_t *buffer, uint32_t size)
+{
+    while (size--)
+    {
+        while ((SCI_A->SCIFLR & SCIFLR_TXRDY_BIT) == 0U)
+        {
+        }
+        SCI_A->SCITD = *buffer++;
+    }
+}
+
+static void blinkHello(void)
+{
+    gpioLedInit();
+
+    /* Diagnostic value: light the LED solid before touching UART. If the
+     * UART were ever to hang, this distinguishes "never reached this
+     * function" from "stuck in uartInit()". */
+    gpioLedWrite(1U);
+
+    uartInit();
 
     uint8_t message[] = "Hello World!\r\n";
     uint32_t level = 0U;
     while (1)
     {
         level ^= 1U;
-        GPIO_write(SOC_XWR68XX_GPIO_2, level);
-        UART_write(uartHandle, (uint8_t*)message, sizeof(message));
-        Task_sleep(500);
+        gpioLedWrite(level);
+        uartWritePolling(message, sizeof(message));
+        delay(4000000U);
     }
 }
 
 int main(void)
 {
-    Task_Params taskParams;
-    int32_t errCode;
-    SOC_Cfg socCfg;
-    SOC_Handle socHandle;
+    /* Essential hardware bring-up SOC_init() used to do -- see the file
+     * header comment for what's deliberately not replicated (MPU regions,
+     * ESM) and why. */
+    bssClockInit();
 
-    /* Initialize the ESM: */
-    ESM_init(0U); // dont clear errors as TI RTOS does it
+    blinkHello();
 
-    /* Initialize the SOC configuration: */
-    memset((void *)&socCfg, 0, sizeof(SOC_Cfg));
-
-    /* Populate the SOC configuration: */
-    socCfg.clockCfg = SOC_SysClock_INIT;
-
-    /* Initialize the SOC Module: done as soon as the application starts to
-     * ensure the MPU is correctly configured, and to bring VCLK up to
-     * 200 MHz (which requires un-halting the BSS and waiting for its APLL
-     * calibration -- nothing else in the boot path does this either). */
-    socHandle = SOC_init(&socCfg, &errCode);
-    if (socHandle == NULL)
-    {
-        System_printf("Error: SOC Module Initialization failed [Error code %d]\n", errCode);
-        return -1;
-    }
-
-    /* Check if the SOC is a secure device */
-    if (SOC_isSecureDevice(socHandle, &errCode))
-    {
-        /* Disable firewall for JTAG and LOGGER (UART) which is needed by the demo */
-        SOC_controlSecureFirewall(socHandle,
-                                  (uint32_t)(SOC_SECURE_FIREWALL_JTAG | SOC_SECURE_FIREWALL_LOGGER),
-                                  SOC_SECURE_FIREWALL_DISABLE,
-                                  &errCode);
-    }
-
-    /* Initialize the Task Parameters. */
-    Task_Params_init(&taskParams);
-    taskParams.priority = 3;
-    taskParams.stackSize = 2 * 1024;
-    Task_create(BlinkHelloTask, &taskParams, NULL);
-
-    BIOS_start();
     return 0;
 }

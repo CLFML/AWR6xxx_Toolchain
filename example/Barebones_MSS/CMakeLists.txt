@@ -32,16 +32,11 @@ set(TI_CGT_ROOT $ENV{HOME}/ti/ti-cgt-arm_16.9.6.LTS)
 # untested variable; match this path exactly unless you've verified otherwise.
 set(TI_MMWAVE_PATH /mnt/3c8641a4-f089-425f-b228-e740a9f7575e/ti/mmwave_sdk_03_04_00_03)
 
-# This example runs on a minimal SYS/BIOS (TI-RTOS) rather than being truly
-# bare-metal. That's deliberate, not an oversight: no hand-rolled bare-metal
-# boot has ever been proven to boot on the AWR6843AOP board this was
-# developed against -- SYS/BIOS's own startup does essential bring-up
-# (SOC_init() below configures the MPU, among other things) that a
-# from-scratch reset handler could not practically replicate.
-set(USE_TI_RTOS ON)
-set(TI_RTOS_PATH $ENV{HOME}/ti/bios_6_73_01_01)
-set(TI_XDC_PATH $ENV{HOME}/ti/xdctools_3_50_08_24_core)
-set(TI_RTOS_CONFIG ${CMAKE_CURRENT_LIST_DIR}/mss_rtos.cfg)
+# Bare-metal: no SYS/BIOS, no XDC/configuro (USE_TI_RTOS stays OFF, the
+# toolchain file's default). src/startup_awr6843.asm supplies the vector
+# table and reset trampoline instead of relying on sysbios.aer4f's linked-in
+# startup -- see that file and src/main.c's header comments (piece 4/N) for
+# why this is now expected to work, unlike the very first bare-metal attempt.
 
 # This path should not be altered, this is the linker file
 set(TI_LINKER_CMD ${CMAKE_CURRENT_LIST_DIR}/linker_awr6843.cmd)
@@ -90,51 +85,26 @@ set(CMAKE_C_LINK_EXECUTABLE "<CMAKE_C_COMPILER> <FLAGS> -z -m <TARGET_NAME>.map 
 # differ).
 set(CMAKE_C_COMPILE_OBJECT "<CMAKE_C_COMPILER> <DEFINES> <INCLUDES> <FLAGS> --output_file=<OBJECT> <SOURCE>")
 
+# Same rule, applied to the assembly source (src/startup_awr6843.asm) for
+# consistency -- armcl compiles/assembles through the same front end either
+# way.
+set(CMAKE_ASM_COMPILE_OBJECT "<CMAKE_ASM_COMPILER> <DEFINES> <INCLUDES> <FLAGS> --output_file=<OBJECT> <SOURCE>")
+
 # New MSS executable
-add_executable(mss_program.xer4f src/main.c)
-add_dependencies(mss_program.xer4f xdc_gen)
+add_executable(mss_program.xer4f src/main.c src/startup_awr6843.asm)
+target_include_directories(mss_program.xer4f PRIVATE ${CMAKE_CURRENT_LIST_DIR}/include)
 target_link_libraries(mss_program.xer4f
-                      ${CMAKE_CURRENT_LIST_DIR}/src/sysbios/sysbios.aer4f
-                      ${XDC_OUTPUT_DIR}/package/cfg/mss_rtos_per4f.oer4f
-                      MMWAVE_DRIVER_ESM
-                      MMWAVE_DRIVER_OSAL
-                      MMWAVE_DRIVER_SOC
-                      MMWAVE_DRIVER_PINMUX
-                      MMWAVE_DRIVER_UART
-                      MMWAVE_DRIVER_DMA
-                      MMWAVE_DRIVER_GPIO
                       # Must come LAST -- see TI_DEFER_RTS_LIBS comment above.
                       ${TI_RTS_LIB}
                       ${TI_LIBC_LIB})
-include_directories(${XDC_OUTPUT_DIR}
-                    ${TI_RTOS_PATH}/packages
-                    ${TI_XDC_PATH}/packages) # Include generated headers
 
-# Match the confirmed-working project's exact compile/link flags. Several of
-# these (MMWAVE_L3RAM_NUM_BANK, MMWAVE_SHMEM_TCMA/TCMB_NUM_BANK,
-# MMWAVE_SHMEM_BANK_SIZE) feed SOC_init()'s own sanity-check asserts against
-# the actual hardware memory configuration -- getting them wrong doesn't
-# necessarily error at build time, so silently omitting them (as the base
-# toolchain file does) is an untested/incorrect configuration, not a merely
-# stylistic difference.
 target_compile_options(mss_program.xer4f PRIVATE
     -O3
     --c99
     --gen_func_subsections=on
 )
-target_compile_definitions(mss_program.xer4f PRIVATE
-    _LITTLE_ENDIAN
-    DOWNLOAD_FROM_CCS
-    MMWAVE_L3RAM_SIZE=0xC0000
-    DebugP_ASSERT_ENABLED
-)
 target_link_options(mss_program.xer4f PRIVATE
     --disable_auto_rts
-    --define=MMWAVE_L3RAM_NUM_BANK=6
-    --define=MMWAVE_SHMEM_TCMA_NUM_BANK=0
-    --define=MMWAVE_SHMEM_TCMB_NUM_BANK=0
-    --define=MMWAVE_SHMEM_BANK_SIZE=0x20000
-    --define=MMWAVE_L3RAM_SIZE=0xC0000
 )
 
 # ---------------------------------------------------------------------------

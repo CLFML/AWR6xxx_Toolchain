@@ -44,7 +44,10 @@
 
 # Kernel Module Compile Results
 *.mod*
-*.cmd
+# Kernel .cmd files are always dot-prefixed (e.g. .foo.o.cmd) -- a bare
+# "*.cmd" also matches TI linker command files like linker_awr6843.cmd,
+# which are checked-in source, not build output.
+.*.cmd
 .tmp_versions/
 modules.order
 Module.symvers
