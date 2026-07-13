@@ -169,8 +169,14 @@ target_link_options(mss_program.xer4f PRIVATE
 # (barebones_mss.bin) is what you flash over UART with UniFlash -- see
 # FLASHING.md.
 #
-# TI ships these tools as Windows binaries: out2rprc is a .NET assembly (run
-# with mono); the other three are native Win32 (run with wine).
+# TI ships these tools as Windows binaries: out2rprc was a .NET assembly
+# (run with mono) -- replaced below with cmake/out2rprc.py, a pure-Python
+# reimplementation (no TI format spec exists; reverse-engineered by
+# disassembling out2rprc.exe's IL and cross-checked byte-for-byte against
+# the real tool's output on this project's own mss_program.xer4f). The
+# other three tools are native Win32 (still run with wine) -- only the .NET
+# one was worth replacing, since mono is the less commonly available of the
+# two runtimes.
 #
 # The DSS component (prebuilt/placeholder_dss.bin) is a placeholder reused
 # from a project confirmed booting on this exact board -- this MSS-only
@@ -184,14 +190,14 @@ set(RADARSS_FW    ${TI_MMWAVE_PATH}/firmware/radarss/xwr6xxx_radarss_rprc.bin)
 set(DSS_PLACEHOLDER ${CMAKE_CURRENT_LIST_DIR}/prebuilt/placeholder_dss.bin)
 set(META_IMAGE    barebones_mss.bin)
 
-find_program(MONO_EXECUTABLE mono REQUIRED)
+find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
 find_program(WINE_EXECUTABLE wine REQUIRED)
 
 add_custom_command(TARGET mss_program.xer4f POST_BUILD
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Generating flashable metaimage ${META_IMAGE} (MSS + RadarSS + DSS placeholder)"
     # 1. ELF -> RPRC
-    COMMAND ${MONO_EXECUTABLE} ${IMAGE_CREATOR}/out2rprc/out2rprc.exe
+    COMMAND ${PYTHON3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/../../cmake/out2rprc.py
             $<TARGET_FILE:mss_program.xer4f> mss_program.rprc
     # 2. Fuse MSS RPRC (0x35510000) + RadarSS firmware (0xb5510000) + DSS (0xd5510000)
     COMMAND ${CMAKE_COMMAND} -E env WINEDEBUG=-all ${WINE_EXECUTABLE}
