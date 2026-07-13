@@ -169,14 +169,18 @@ target_link_options(mss_program.xer4f PRIVATE
 # (barebones_mss.bin) is what you flash over UART with UniFlash -- see
 # FLASHING.md.
 #
-# TI ships these tools as Windows binaries: out2rprc was a .NET assembly
-# (run with mono) -- replaced below with cmake/out2rprc.py, a pure-Python
-# reimplementation (no TI format spec exists; reverse-engineered by
-# disassembling out2rprc.exe's IL and cross-checked byte-for-byte against
-# the real tool's output on this project's own mss_program.xer4f). The
-# other three tools are native Win32 (still run with wine) -- only the .NET
-# one was worth replacing, since mono is the less commonly available of the
-# two runtimes.
+# TI ships these tools as Windows binaries -- all four are now replaced
+# with pure-Python reimplementations in cmake/, dropping both the mono and
+# wine dependencies entirely. No TI format spec exists for any of these;
+# each was reverse-engineered (IL disassembly for the one .NET tool,
+# out2rprc.exe; objdump/Unicorn-emulated disassembly plus the SBL's own C
+# reader source in ti/utils/sbl/ for the three native-PE tools) and
+# cross-checked byte-for-byte against the real tools' output on this
+# project's own build artifacts -- see each script's module docstring for
+# exactly what was verified and how. The full replacement pipeline was
+# confirmed to reproduce the same hardware-confirmed image byte-for-byte
+# (identical CRC32) as the original mono/wine pipeline before being wired
+# in here.
 #
 # The DSS component (prebuilt/placeholder_dss.bin) is a placeholder reused
 # from a project confirmed booting on this exact board -- this MSS-only
@@ -191,26 +195,27 @@ set(DSS_PLACEHOLDER ${CMAKE_CURRENT_LIST_DIR}/prebuilt/placeholder_dss.bin)
 set(META_IMAGE    barebones_mss.bin)
 
 find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
-find_program(WINE_EXECUTABLE wine REQUIRED)
+set(IMAGE_GEN_SCRIPTS ${CMAKE_CURRENT_LIST_DIR}/../../cmake)
 
 add_custom_command(TARGET mss_program.xer4f POST_BUILD
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Generating flashable metaimage ${META_IMAGE} (MSS + RadarSS + DSS placeholder)"
     # 1. ELF -> RPRC
-    COMMAND ${PYTHON3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/../../cmake/out2rprc.py
+    COMMAND ${PYTHON3_EXECUTABLE} ${IMAGE_GEN_SCRIPTS}/out2rprc.py
             $<TARGET_FILE:mss_program.xer4f> mss_program.rprc
     # 2. Fuse MSS RPRC (0x35510000) + RadarSS firmware (0xb5510000) + DSS (0xd5510000)
-    COMMAND ${CMAKE_COMMAND} -E env WINEDEBUG=-all ${WINE_EXECUTABLE}
-            ${IMAGE_CREATOR}/multicore_image_generator/MulticoreImageGen.exe
+    COMMAND ${PYTHON3_EXECUTABLE} ${IMAGE_GEN_SCRIPTS}/multicore_image_gen.py
             LE 37 0x00000006 ${META_IMAGE}
             0x35510000 mss_program.rprc
             0xb5510000 ${RADARSS_FW}
             0xd5510000 ${DSS_PLACEHOLDER}
-    # 3. Insert per-section CRCs, then 4. append the trailing image CRC32
-    COMMAND ${CMAKE_COMMAND} -E env WINEDEBUG=-all ${WINE_EXECUTABLE}
-            ${IMAGE_CREATOR}/crc_multicore_image/crc_multicore_image.exe
+    # 3. Insert per-section CRCs. Mutates ${META_IMAGE} (LE) in place -- the
+    # second arg is a byte-swapped (BE) copy this pipeline doesn't consume,
+    # kept only because the real crc_multicore_image.exe produces one too;
+    # see cmake/crc_multicore_image.py's module docstring.
+    COMMAND ${PYTHON3_EXECUTABLE} ${IMAGE_GEN_SCRIPTS}/crc_multicore_image.py
             ${META_IMAGE} ${META_IMAGE}.tmp
-    COMMAND ${CMAKE_COMMAND} -E env WINEDEBUG=-all ${WINE_EXECUTABLE}
-            ${IMAGE_CREATOR}/append_bin_crc/gen_bincrc32.exe ${META_IMAGE}
+    # 4. Append the trailing whole-image CRC32.
+    COMMAND ${PYTHON3_EXECUTABLE} ${IMAGE_GEN_SCRIPTS}/gen_bincrc32.py ${META_IMAGE}
     COMMAND ${CMAKE_COMMAND} -E echo "Flashable image ready: ${CMAKE_BINARY_DIR}/${META_IMAGE}"
 )
