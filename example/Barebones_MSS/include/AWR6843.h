@@ -57,6 +57,7 @@
 static volatile IOMUX_Type* const IOMUX = (volatile IOMUX_Type*)SOC_XWR68XX_MSS_PINMUX_BASE_ADDRESS;
 static volatile GIO_Type* const GIO = (volatile GIO_Type*)SOC_XWR68XX_MSS_GIO_BASE_ADDRESS;
 static volatile SCI_Type* const SCI_A = (volatile SCI_Type*)SOC_XWR68XX_MSS_SCI_A_BASE_ADDRESS;
+static volatile SCI_Type* const SCI_B = (volatile SCI_Type*)SOC_XWR68XX_MSS_SCI_B_BASE_ADDRESS;
 static volatile TOPRCM_Type* const TOP_RCM = (volatile TOPRCM_Type*)SOC_XWR68XX_MSS_TOP_RCM_BASE_ADDRESS;
 
 

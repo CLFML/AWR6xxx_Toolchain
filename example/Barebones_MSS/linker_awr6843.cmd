@@ -11,14 +11,11 @@
 /*----------------------------------------------------------------------------*/
 /* Linker Settings                                                            */
 --retain="*(.intvecs)"
---entry_point=_resetEntry
-/* Own vector table + reset trampoline again (src/startup_awr6843.asm),      */
-/* instead of relying on SYS/BIOS's linked-in startup. Earlier bare-metal    */
-/* attempts assumed the SBL/boot path needed SYS/BIOS's own startup code to  */
-/* do essential bring-up; disassembling the working SYS/BIOS reference later */
-/* proved that assumption wrong -- .vecs there points straight at _c_int00,  */
-/* Core_resetC is dead code, and _c_int00 already enables VFP itself. See    */
-/* src/startup_awr6843.asm's header comment for the full reasoning.          */
+/* No bare-metal boot has ever been proven to boot on this AWR6843AOP board's */
+/* SBL -- SYS/BIOS's own startup (linked in via sysbios.aer4f) provides the   */
+/* vector table and does essential bring-up (MPU config via SOC_init()) that  */
+/* a hand-rolled bare-metal reset trampoline could not replicate. See         */
+/* AWR6xxx_Toolchain memory notes / project history for the long story.       */
 
 /*----------------------------------------------------------------------------*/
 /* Memory Map                                                                 */
@@ -41,6 +38,7 @@ SECTIONS{
     .bss     : {} > DATA_RAM
     .data    : {} > DATA_RAM
     .stack   : {} > DATA_RAM ALIGN(32)
+    systemHeap : {} > DATA_RAM
 }
 /*----------------------------------------------------------------------------*/
 
