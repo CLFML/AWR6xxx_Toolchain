@@ -28,12 +28,12 @@ set(TI_CGT_ROOT $ENV{HOME}/ti/ti-cgt-arm_16.9.6.LTS)
 # Deliberately mmwave_sdk_03_04_00_03, NOT the 03_06_02_00-LTS install under
 # $HOME/ti -- this is the exact SDK version (different compiled
 # libgpio/libuart/... binaries, and firmware/ImageCreator tooling) that a
-# project confirmed booting on this exact board links against/uses. GPIO/
-# UART/SOC no longer link against this SDK's precompiled drivers (see
-# Universal_hal below), but ESM still does, and the image-gen step still
-# uses this SDK's RadarSS firmware/tools. Swapping to another SDK install
-# here is an untested variable; match this path exactly unless you've
-# verified otherwise.
+# project confirmed booting on this exact board links against/uses. None of
+# GPIO/pinmux/UART/SOC/ESM link against this SDK's precompiled drivers
+# anymore (see Universal_hal below) -- only the image-gen step still uses
+# this SDK's RadarSS firmware/tools. Swapping to another SDK install here is
+# an untested variable; match this path exactly unless you've verified
+# otherwise.
 set(TI_MMWAVE_PATH /mnt/3c8641a4-f089-425f-b228-e740a9f7575e/ti/mmwave_sdk_03_04_00_03)
 
 # This example runs on a minimal SYS/BIOS (TI-RTOS) rather than being truly
@@ -132,7 +132,6 @@ add_dependencies(mss_program.xer4f xdc_gen)
 target_link_libraries(mss_program.xer4f
                       ${CMAKE_CURRENT_LIST_DIR}/src/sysbios/sysbios.aer4f
                       ${XDC_OUTPUT_DIR}/package/cfg/mss_rtos_per4f.oer4f
-                      MMWAVE_DRIVER_OSAL
                       Universal_hal
                       # Must come LAST -- see TI_DEFER_RTS_LIBS comment above.
                       ${TI_RTS_LIB}
@@ -141,31 +140,24 @@ include_directories(${XDC_OUTPUT_DIR}
                     ${TI_RTOS_PATH}/packages
                     ${TI_XDC_PATH}/packages) # Include generated headers
 
-# Match the confirmed-working project's exact compile/link flags. Several of
-# these (MMWAVE_L3RAM_NUM_BANK, MMWAVE_SHMEM_TCMA/TCMB_NUM_BANK,
-# MMWAVE_SHMEM_BANK_SIZE) feed SOC_init()'s own sanity-check asserts against
-# the actual hardware memory configuration -- getting them wrong doesn't
-# necessarily error at build time, so silently omitting them (as the base
-# toolchain file does) is an untested/incorrect configuration, not a merely
-# stylistic difference.
+# _LITTLE_ENDIAN, DOWNLOAD_FROM_CCS, DebugP_ASSERT_ENABLED, and the
+# --define=MMWAVE_L3RAM_NUM_BANK/MMWAVE_SHMEM_*/MMWAVE_L3RAM_SIZE linker
+# symbols used to matter here: they fed the mmWave SDK's precompiled
+# libsoc_xwr68xx.aer4f's own SOC_deviceInit() sanity-check asserts (L3RAM/
+# TCMA/TCMB bank counts against the actual hardware config) and libosal's
+# DebugP_assert plumbing. Now that GPIO/pinmux/UART/SOC/ESM are all ported
+# to Universal_hal and none of the mmWave SDK's precompiled driver
+# libraries are linked anymore, none of that code exists in this image to
+# consume them -- confirmed by removing them and getting a byte-identical
+# rebuild (same CRC32, same size). Left out rather than kept as
+# now-meaningless cruft.
 target_compile_options(mss_program.xer4f PRIVATE
     -O3
     --c99
     --gen_func_subsections=on
 )
-target_compile_definitions(mss_program.xer4f PRIVATE
-    _LITTLE_ENDIAN
-    DOWNLOAD_FROM_CCS
-    MMWAVE_L3RAM_SIZE=0xC0000
-    DebugP_ASSERT_ENABLED
-)
 target_link_options(mss_program.xer4f PRIVATE
     --disable_auto_rts
-    --define=MMWAVE_L3RAM_NUM_BANK=6
-    --define=MMWAVE_SHMEM_TCMA_NUM_BANK=0
-    --define=MMWAVE_SHMEM_TCMB_NUM_BANK=0
-    --define=MMWAVE_SHMEM_BANK_SIZE=0x20000
-    --define=MMWAVE_L3RAM_SIZE=0xC0000
 )
 
 # ---------------------------------------------------------------------------
