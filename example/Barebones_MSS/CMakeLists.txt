@@ -27,16 +27,19 @@ set(TI_CGT_ROOT $ENV{HOME}/ti/ti-cgt-arm_16.9.6.LTS)
 # Set this path to the mmWave SDK.
 # Deliberately mmwave_sdk_03_04_00_03, NOT the 03_06_02_00-LTS install under
 # $HOME/ti -- this is the exact SDK version (different compiled
-# libgpio/libuart/libsoc/... binaries) that a project confirmed booting on
-# this exact board links against. Swapping to another SDK install here is an
-# untested variable; match this path exactly unless you've verified otherwise.
+# libgpio/libuart/... binaries, and firmware/ImageCreator tooling) that a
+# project confirmed booting on this exact board links against/uses. GPIO/
+# UART/SOC no longer link against this SDK's precompiled drivers (see
+# Universal_hal below), but ESM still does, and the image-gen step still
+# uses this SDK's RadarSS firmware/tools. Swapping to another SDK install
+# here is an untested variable; match this path exactly unless you've
+# verified otherwise.
 set(TI_MMWAVE_PATH /mnt/3c8641a4-f089-425f-b228-e740a9f7575e/ti/mmwave_sdk_03_04_00_03)
 
 # This example runs on a minimal SYS/BIOS (TI-RTOS) rather than being truly
 # bare-metal. That's deliberate, not an oversight: no hand-rolled bare-metal
 # boot has ever been proven to boot on the AWR6843AOP board this was
-# developed against -- SYS/BIOS's own startup does essential bring-up
-# (SOC_init() below configures the MPU, among other things) that a
+# developed against -- SYS/BIOS's own startup does essential bring-up that a
 # from-scratch reset handler could not practically replicate.
 set(USE_TI_RTOS ON)
 set(TI_RTOS_PATH $ENV{HOME}/ti/bios_6_73_01_01)
@@ -90,11 +93,12 @@ set(CMAKE_C_LINK_EXECUTABLE "<CMAKE_C_COMPILER> <FLAGS> -z -m <TARGET_NAME>.map 
 # differ).
 set(CMAKE_C_COMPILE_OBJECT "<CMAKE_C_COMPILER> <DEFINES> <INCLUDES> <FLAGS> --output_file=<OBJECT> <SOURCE>")
 
-# GPIO/pinmux/UART now go through Universal_hal (vendored in Universal_hal/,
-# gitignored -- see that directory's own git remote) instead of the mmWave
-# SDK's precompiled ti/drivers/gpio, ti/drivers/pinmux, ti/drivers/uart.
+# GPIO/pinmux/UART/SOC now go through Universal_hal (vendored in
+# Universal_hal/, gitignored -- see that directory's own git remote) instead
+# of the mmWave SDK's precompiled ti/drivers/gpio, ti/drivers/pinmux,
+# ti/drivers/uart, ti/drivers/soc.
 # PLATFORM_DEFINED selects Universal_hal's own CMakeLists.txt branch that
-# builds hal/platform/ti/iwr68xx/{gpio,pinmux,uart}; matched against
+# builds hal/platform/ti/iwr68xx/{gpio,pinmux,uart,soc}; matched against
 # "^SOC_XWR68", not tied to any variable this project already defines
 # elsewhere, so set explicitly here rather than reusing SOC_XWR68XX (the
 # compile *definition* added by R4F-toolchain.cmake, a different thing).
@@ -121,7 +125,6 @@ target_link_libraries(mss_program.xer4f
                       ${XDC_OUTPUT_DIR}/package/cfg/mss_rtos_per4f.oer4f
                       MMWAVE_DRIVER_ESM
                       MMWAVE_DRIVER_OSAL
-                      MMWAVE_DRIVER_SOC
                       Universal_hal
                       # Must come LAST -- see TI_DEFER_RTS_LIBS comment above.
                       ${TI_RTS_LIB}

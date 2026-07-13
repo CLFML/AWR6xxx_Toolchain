@@ -27,21 +27,26 @@
 *  file was attempted at length and reverted -- see git history -- after an
 *  unexplained data abort on the very first MSS peripheral register access
 *  after boot couldn't be root-caused. SYS/BIOS's own startup does
-*  essential bring-up (SOC_init() below configures the MPU, among other
-*  things) that a from-scratch reset handler could not practically
-*  replicate blind.
+*  essential bring-up that a from-scratch reset handler could not
+*  practically replicate blind.
 *
-*  GPIO/pinmux/UART now go through Universal_hal (vendored in
+*  GPIO/pinmux/UART/SOC now all go through Universal_hal (vendored in
 *  Universal_hal/, see that directory's own git remote) instead of the
 *  mmWave SDK's precompiled ti/drivers/gpio, ti/drivers/pinmux,
-*  ti/drivers/uart -- i.e. Universal_hal's own hand-written register access
-*  instead of TI's. SOC_init()/ESM_init() (clock bring-up, MPU, secure
-*  firewall) stay on the SDK's ti/drivers/soc and ti/drivers/esm: those
-*  aren't GPIO/UART, and Universal_hal has no equivalent for them.
-*  Universal_hal's UART support for this chip didn't exist yet -- added
-*  here (hal/platform/ti/iwr68xx/uart/) as part of this change, ported from
-*  the same mmWave SDK register sequence (ti/drivers/uart/src/uartsci.c)
-*  the precompiled driver it replaces was built from.
+*  ti/drivers/uart, ti/drivers/soc -- i.e. Universal_hal's own hand-written
+*  register access instead of TI's. ESM_init() stays on the SDK's
+*  ti/drivers/esm: that's a distinct subsystem (FIQ/IRQ Hwi registration)
+*  Universal_hal has no equivalent for and this example doesn't otherwise
+*  need. Universal_hal's UART and SOC support for this chip didn't exist
+*  yet -- added as part of this change. UART was ported from the same
+*  mmWave SDK register sequence (ti/drivers/uart/src/uartsci.c) the
+*  precompiled driver it replaces was built from. soc_init() was ported
+*  from ti/drivers/soc/src/soc.c's SOC_init() (BSS/APLL clock bring-up),
+*  soc_xwr68xx_mss.c's SOC_mpu_config() (the same 12-region Cortex-R4F MPU
+*  table, since that's essential bring-up, not incidental -- see the MPU
+*  comment above SOC_init() in the file this was ported from) and
+*  SOC_isSecureDevice()/SOC_controlSecureFirewall() (JTAG/logger firewall
+*  disable on secure parts).
 *
 *  UART pin mapping, cross-checked against the AWR6843AOPEVM schematic
 *  (PROC091G), the mmWave SDK's pinmux_xwr68xx.h, and a firmware project
@@ -64,12 +69,11 @@
 #include <ti/sysbios/BIOS.h>
 #include <ti/sysbios/knl/Task.h>
 #include <ti/drivers/esm/esm.h>
-#include <ti/drivers/soc/soc.h>
 #include <ti/common/sys_common.h>
 #include <hal_pinmux.h>
 #include <hal_gpio.h>
 #include <hal_uart.h>
-#include <string.h>
+#include <hal_soc.h>
 
 void BlinkHelloTask(UArg arg0, UArg arg1)
 {
@@ -108,38 +112,19 @@ void BlinkHelloTask(UArg arg0, UArg arg1)
 int main(void)
 {
     Task_Params taskParams;
-    int32_t errCode;
-    SOC_Cfg socCfg;
-    SOC_Handle socHandle;
 
     /* Initialize the ESM: */
     ESM_init(0U); // dont clear errors as TI RTOS does it
 
-    /* Initialize the SOC configuration: */
-    memset((void *)&socCfg, 0, sizeof(SOC_Cfg));
-
-    /* Populate the SOC configuration: */
-    socCfg.clockCfg = SOC_SysClock_INIT;
-
-    /* Initialize the SOC Module: done as soon as the application starts to
-     * ensure the MPU is correctly configured, and to bring VCLK up to
-     * 200 MHz (which requires un-halting the BSS and waiting for its APLL
-     * calibration -- nothing else in the boot path does this either). */
-    socHandle = SOC_init(&socCfg, &errCode);
-    if (socHandle == NULL)
+    /* Initialize the SOC: done as soon as the application starts to ensure
+     * the MPU is correctly configured, bring VCLK up to 200 MHz (which
+     * requires un-halting the BSS and waiting for its APLL calibration --
+     * nothing else in the boot path does this either), and disable the
+     * JTAG/logger debug firewalls on secure parts. */
+    if (soc_init() != UHAL_STATUS_OK)
     {
-        System_printf("Error: SOC Module Initialization failed [Error code %d]\n", errCode);
+        System_printf("Error: SOC Module Initialization failed\n");
         return -1;
-    }
-
-    /* Check if the SOC is a secure device */
-    if (SOC_isSecureDevice(socHandle, &errCode))
-    {
-        /* Disable firewall for JTAG and LOGGER (UART) which is needed by the demo */
-        SOC_controlSecureFirewall(socHandle,
-                                  (uint32_t)(SOC_SECURE_FIREWALL_JTAG | SOC_SECURE_FIREWALL_LOGGER),
-                                  SOC_SECURE_FIREWALL_DISABLE,
-                                  &errCode);
     }
 
     /* Initialize the Task Parameters. */
