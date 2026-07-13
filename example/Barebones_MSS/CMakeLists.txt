@@ -108,14 +108,23 @@ set(CMAKE_C_COMPILE_OBJECT "<CMAKE_C_COMPILER> <DEFINES> <INCLUDES> <FLAGS> --ou
 # them -- relies on something else in the translation unit doing so first.
 # Untested with this SDK version; skip it rather than risk an implicit-
 # declaration error under --c99. Losing that interrupt-safety window is
-# fine for this single-task blink+hello example.
+# fine for this single-task blink+hello example. (esm_iwr68xx.c is the one
+# exception -- it #includes SYS/BIOS's own Hwi.h directly, see below.)
 set(PLATFORM_DEFINED "SOC_XWR68XX" CACHE STRING "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/Universal_hal Universal_hal-build)
 # Universal_hal's own TI source (gpio_iwr68xx.c etc.) includes <AWR6843.h>
 # and friends -- those live in this project's include/, not in
 # Universal_hal itself, so its own compilation needs this path too, not
-# just main.c's.
-target_include_directories(Universal_hal PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
+# just main.c's. esm_iwr68xx.c additionally needs SYS/BIOS's own
+# <ti/sysbios/family/arm/v7r/vim/Hwi.h> (it registers the ESM FIQ/IRQ
+# through SYS/BIOS's Hwi_create(), the only way to hook those vectors when
+# SYS/BIOS owns the vector table) and <xdc/runtime/Error.h> -- both are
+# plain pre-built headers from the RTOS/XDC package installs, not something
+# generated per-project, so no xdc_gen dependency is needed for this,
+# unlike main.c's <package/cfg/mss_rtos_per4f.h>.
+target_include_directories(Universal_hal PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
+                                                 ${TI_RTOS_PATH}/packages
+                                                 ${TI_XDC_PATH}/packages)
 
 # New MSS executable
 add_executable(mss_program.xer4f src/main.c)
@@ -123,7 +132,6 @@ add_dependencies(mss_program.xer4f xdc_gen)
 target_link_libraries(mss_program.xer4f
                       ${CMAKE_CURRENT_LIST_DIR}/src/sysbios/sysbios.aer4f
                       ${XDC_OUTPUT_DIR}/package/cfg/mss_rtos_per4f.oer4f
-                      MMWAVE_DRIVER_ESM
                       MMWAVE_DRIVER_OSAL
                       Universal_hal
                       # Must come LAST -- see TI_DEFER_RTS_LIBS comment above.

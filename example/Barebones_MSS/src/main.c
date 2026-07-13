@@ -30,23 +30,27 @@
 *  essential bring-up that a from-scratch reset handler could not
 *  practically replicate blind.
 *
-*  GPIO/pinmux/UART/SOC now all go through Universal_hal (vendored in
+*  GPIO/pinmux/UART/SOC/ESM now all go through Universal_hal (vendored in
 *  Universal_hal/, see that directory's own git remote) instead of the
 *  mmWave SDK's precompiled ti/drivers/gpio, ti/drivers/pinmux,
-*  ti/drivers/uart, ti/drivers/soc -- i.e. Universal_hal's own hand-written
-*  register access instead of TI's. ESM_init() stays on the SDK's
-*  ti/drivers/esm: that's a distinct subsystem (FIQ/IRQ Hwi registration)
-*  Universal_hal has no equivalent for and this example doesn't otherwise
-*  need. Universal_hal's UART and SOC support for this chip didn't exist
-*  yet -- added as part of this change. UART was ported from the same
-*  mmWave SDK register sequence (ti/drivers/uart/src/uartsci.c) the
-*  precompiled driver it replaces was built from. soc_init() was ported
-*  from ti/drivers/soc/src/soc.c's SOC_init() (BSS/APLL clock bring-up),
-*  soc_xwr68xx_mss.c's SOC_mpu_config() (the same 12-region Cortex-R4F MPU
-*  table, since that's essential bring-up, not incidental -- see the MPU
-*  comment above SOC_init() in the file this was ported from) and
+*  ti/drivers/uart, ti/drivers/soc, ti/drivers/esm -- i.e. Universal_hal's
+*  own hand-written register access instead of TI's. Universal_hal's UART/
+*  SOC/ESM support for this chip didn't exist yet -- added as part of this
+*  change. UART was ported from the same mmWave SDK register sequence
+*  (ti/drivers/uart/src/uartsci.c) the precompiled driver it replaces was
+*  built from. soc_init() was ported from ti/drivers/soc/src/soc.c's
+*  SOC_init() (BSS/APLL clock bring-up), soc_xwr68xx_mss.c's
+*  SOC_mpu_config() (the same 12-region Cortex-R4F MPU table, since that's
+*  essential bring-up, not incidental -- see the MPU comment above
+*  SOC_init() in the file this was ported from) and
 *  SOC_isSecureDevice()/SOC_controlSecureFirewall() (JTAG/logger firewall
-*  disable on secure parts).
+*  disable on secure parts). esm_init() was ported from
+*  ti/drivers/esm/src/esm.c's ESM_init()/ESM_highpriority_FIQ()/
+*  ESM_lowpriority_IRQ() -- unlike the other modules this one is inherently
+*  RTOS-coupled (the R4F VIM's FIQ/IRQ lines are wired up via SYS/BIOS's own
+*  Hwi_create(), there's no register-only alternative that doesn't
+*  reimplement SYS/BIOS's vector table hookup), so Universal_hal's TI
+*  IWR68xx esm module #includes SYS/BIOS's Hwi.h directly.
 *
 *  UART pin mapping, cross-checked against the AWR6843AOPEVM schematic
 *  (PROC091G), the mmWave SDK's pinmux_xwr68xx.h, and a firmware project
@@ -68,12 +72,12 @@
 #include <xdc/runtime/System.h>
 #include <ti/sysbios/BIOS.h>
 #include <ti/sysbios/knl/Task.h>
-#include <ti/drivers/esm/esm.h>
 #include <ti/common/sys_common.h>
 #include <hal_pinmux.h>
 #include <hal_gpio.h>
 #include <hal_uart.h>
 #include <hal_soc.h>
+#include <hal_esm.h>
 
 void BlinkHelloTask(UArg arg0, UArg arg1)
 {
@@ -113,8 +117,9 @@ int main(void)
 {
     Task_Params taskParams;
 
-    /* Initialize the ESM: */
-    ESM_init(0U); // dont clear errors as TI RTOS does it
+    /* Initialize the ESM: don't clear errors, SYS/BIOS already does it
+     * before main() runs. */
+    esm_init(0U);
 
     /* Initialize the SOC: done as soon as the application starts to ensure
      * the MPU is correctly configured, bring VCLK up to 200 MHz (which

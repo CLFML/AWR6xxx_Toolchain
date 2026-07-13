@@ -6,6 +6,7 @@
 #include "AWR6843_GIO.h"
 #include "AWR6843_SCI.h"
 #include "AWR6843_TOPRCM.h"
+#include "AWR6843_ESM.h"
 
 #define SOC_XWR68XX_MSS_QSPI_BASE_ADDRESS             0xC0800000U
 #define SOC_XWR68XX_MSS_DMA_2_PKT_BASE_ADDRESS        0xFCF81000U
@@ -33,6 +34,11 @@
 #define SOC_XWR68XX_MSS_PINMUX_BASE_ADDRESS           0xFFFFEA00U
 #define SOC_XWR68XX_MSS_RTIB_BASE_ADDRESS             0xFFFFEE00U
 #define SOC_XWR68XX_MSS_ESM_BASE_ADDRESS              0xFFFFF500U
+/* VIM (Vectored Interrupt Manager) line numbers, not memory addresses --
+ * kept alongside the base addresses above since they're the other half of
+ * "how to wire up the ESM peripheral." */
+#define SOC_XWR68XX_MSS_ESM_HIGH_PRIORITY_INT         0U
+#define SOC_XWR68XX_MSS_ESM_LOW_PRIORITY_INT          20U
 #define SOC_XWR68XX_MSS_GPCFG_BASE_ADDRESS            0xFFFFF800U
 #define SOC_XWR68XX_MSS_DMA_1_CTRL_BASE_ADDRESS       0xFFFFF000U
 #define SOC_XWR68XX_MSS_RCM_BASE_ADDRESS              0xFFFFFF00U
@@ -59,6 +65,7 @@ static volatile GIO_Type* const GIO = (volatile GIO_Type*)SOC_XWR68XX_MSS_GIO_BA
 static volatile SCI_Type* const SCI_A = (volatile SCI_Type*)SOC_XWR68XX_MSS_SCI_A_BASE_ADDRESS;
 static volatile SCI_Type* const SCI_B = (volatile SCI_Type*)SOC_XWR68XX_MSS_SCI_B_BASE_ADDRESS;
 static volatile TOPRCM_Type* const TOP_RCM = (volatile TOPRCM_Type*)SOC_XWR68XX_MSS_TOP_RCM_BASE_ADDRESS;
+static volatile ESM_Type* const ESM = (volatile ESM_Type*)SOC_XWR68XX_MSS_ESM_BASE_ADDRESS;
 
 
 
