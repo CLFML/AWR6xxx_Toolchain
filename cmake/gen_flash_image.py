@@ -156,8 +156,16 @@ standard named CRC-64 variant (XZ, ECMA-182, GO-ISO, ...) despite sharing
 GO-ISO's polynomial -- this is a distinct bit ordering:
   width=64  poly=0x000000000000001B (x^64+x^4+x^3+x+1)  init=0
   refin=False (MSB-first, natural byte order)  refout=False  xorout=0
-No lookup table is used (matching the reference hardware, which computes
-this bit-serially); fine at these image sizes.
+The reference hardware computes this bit-serially; calculate_crc64() below
+instead uses a precomputed 256-entry lookup table (the standard table-
+driven reformulation of the same bit-serial algorithm -- mathematically
+identical output, not an approximation) since a pure-Python bit-serial
+loop over a few hundred KB is slow (~4s) compared to the table-driven
+byte-at-a-time version (~0.1s), and this script has no other way to get a
+fast implementation without adding a compiled dependency (numpy, cffi,
+etc.) that would work against the whole point of "no dependencies but
+Python itself." The table-driven form is checked against the same TI
+hardware test vector as the bit-serial derivation above.
 
 Only 4-byte-aligned per-file sizes and an 8-byte-aligned header are
 handled -- the real tool has zero-padding code paths for unaligned sizes
@@ -182,7 +190,6 @@ validation uses the completely different CRC64 scheme from stage 3,
 computed by hardware); it exists purely for host-side flashing tools
 (UniFlash etc.) to sanity-check that the .bin reached target flash intact.
 """
-import argparse
 import struct
 import sys
 import zlib
@@ -365,19 +372,33 @@ CRC64_POLY = 0x000000000000001B
 CRC64_MASK = (1 << 64) - 1
 
 
+def _build_crc64_table():
+    """Standard table-driven reformulation of an MSB-first, non-reflected
+    CRC: table[i] is the bit-serial result of running the byte value `i`
+    (placed in the top byte of the register) through the same shift/XOR
+    steps calculate_crc64() below would perform one bit at a time."""
+    table = []
+    for i in range(256):
+        crc = i << 56
+        for _ in range(8):
+            crc = ((crc << 1) ^ CRC64_POLY) if (crc & (1 << 63)) else (crc << 1)
+            crc &= CRC64_MASK
+        table.append(crc)
+    return table
+
+
+_CRC64_TABLE = _build_crc64_table()
+
+
 def calculate_crc64(data):
-    """Bit-serial CRC64 exactly matching the real crc_multicore_image.exe
+    """Table-driven CRC64 exactly matching the real crc_multicore_image.exe
     and TI's SBL-side CRC64 hardware peripheral -- see the module
     docstring's "Stage 3" section. init=0, poly=0x1B, MSB-first, no
     reflection, no final XOR."""
     crc = 0
+    table = _CRC64_TABLE
     for byte in data:
-        for bitpos in range(7, -1, -1):
-            top = (crc >> 63) & 1
-            bit = (byte >> bitpos) & 1
-            crc = (crc << 1) & CRC64_MASK
-            if top ^ bit:
-                crc ^= CRC64_POLY
+        crc = ((crc << 8) ^ table[((crc >> 56) ^ byte) & 0xFF]) & CRC64_MASK
     return crc
 
 
