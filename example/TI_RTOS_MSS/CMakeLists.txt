@@ -35,11 +35,17 @@ set(TI_MMWAVE_PATH /mnt/3c8641a4-f089-425f-b228-e740a9f7575e/ti/mmwave_sdk_03_04
 # This is the reference SYS/BIOS (TI-RTOS) example: known-good, confirmed
 # booting on real hardware (LED blink + UART "Hello World!"). It currently
 # uses the mmWave SDK's own ti/drivers/* (GPIO/UART/pinmux/SOC/ESM) directly,
-# not Universal_hal -- Universal_hal is vendored alongside this project
-# (Universal_hal/, include/AWR6843*.h) for future work switching main.c over
-# to it, but is not yet wired into the build. Treat this directory as the
-# known-good reference; Barebones_MSS is the working copy being progressively
-# stripped down towards bare-metal (no RTOS).
+# not Universal_hal. This project used to vendor its own separate
+# Universal_hal/ checkout and a local include/AWR6843*.h copy, staged for
+# possible future work switching main.c over to Universal_hal -- both were
+# removed (dead/unused, never wired into this build, and the register
+# headers had drifted stale vs. the shared copy). If that migration ever
+# happens, reuse ${CMAKE_CURRENT_LIST_DIR}/../Barebones_MSS/Universal_hal
+# and ${CMAKE_CURRENT_LIST_DIR}/../../include -- the same shared locations
+# every other example in this toolchain already uses -- not a new private
+# copy of either. Treat this directory as the known-good reference;
+# Barebones_MSS is the working copy being progressively stripped down
+# towards bare-metal (no RTOS).
 set(USE_TI_RTOS ON)
 set(TI_RTOS_PATH $ENV{HOME}/ti/bios_6_73_01_01)
 set(TI_XDC_PATH $ENV{HOME}/ti/xdctools_3_50_08_24_core)

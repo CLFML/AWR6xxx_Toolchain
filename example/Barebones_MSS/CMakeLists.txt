@@ -107,10 +107,12 @@ set(PLATFORM_DEFINED "SOC_XWR68XX" CACHE STRING "" FORCE)
 set(UHAL_DISABLE_ESM_MODULE ON CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/Universal_hal Universal_hal-build)
 # Universal_hal's own TI source (gpio_iwr68xx.c etc.) includes <AWR6843.h>
-# and friends -- those live in this project's include/, not in
-# Universal_hal itself, so its own compilation needs this path too, not
-# just main.c's.
-target_include_directories(Universal_hal PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
+# and friends -- those live in this toolchain repo's shared include/ (CMSIS-
+# style device headers, one copy for every example -- see that directory's
+# AWR6843.h header comment for why this isn't inside Universal_hal itself),
+# not a private per-example copy, so Universal_hal's own compilation needs
+# this path too, not just main.c's.
+target_include_directories(Universal_hal PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../../include)
 
 # New MSS executable
 add_executable(mss_program.xer4f src/main.c src/startup_awr6843.asm)

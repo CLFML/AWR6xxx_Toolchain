@@ -4,12 +4,12 @@ No debugger required. You flash the generated image into the on-board serial
 (QSPI) flash over USB, then let the ROM bootloader run it.
 
 **This is the known-good reference example -- leave it working.**
-`example/Barebones_MSS` starts as a byte-for-byte copy of this project and is
-where active work happens (progressively stripping RTOS pieces towards true
-bare-metal, and eventually switching from the mmWave SDK's own `ti/drivers/*`
-over to `Universal_hal`, which is vendored here alongside this project but
-not yet wired into the build). If you break Barebones_MSS, this directory is
-what you diff against or copy back from.
+It's the only example still on the mmWave SDK's own `ti/drivers/*` + SYS/BIOS;
+`example/Barebones_MSS`, `GCC_MSS`, and `GCC_FreeRTOS_MSS` are all bare-metal
+(no RTOS but FreeRTOS-Kernel in the last case) on `Universal_hal` instead --
+see those projects' own docs/memory notes for that migration's history. If
+one of those regresses, this directory is what you diff against or copy
+patterns back from.
 
 This example boots on a minimal SYS/BIOS (TI-RTOS), not bare-metal. That's a
 deliberate choice, not an oversight: no hand-rolled bare-metal boot (custom
