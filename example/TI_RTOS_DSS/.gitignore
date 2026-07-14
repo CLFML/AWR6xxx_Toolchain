@@ -1,0 +1,8 @@
+build/
+
+# XDCtools' custom BIOS-library build (dss_rtos.cfg's BIOS.libType_Custom)
+# lands its output here -- in the source tree, not build/ -- as a side
+# effect of the xdc_gen custom command. Unlike TI_RTOS_MSS's src/sysbios/
+# (a deliberately vendored prebuilt sysbios.aer4f), this one is not
+# committed; it's rebuilt fresh by every configure.
+src/
