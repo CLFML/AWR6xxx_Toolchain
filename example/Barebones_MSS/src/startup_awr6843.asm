@@ -96,6 +96,24 @@ _resetEntry:
         ISB
 
         ;*------------------------------------------------------
+        ;* Enable the VFP coprocessor: full CP10/CP11 access via
+        ;* CPACR, then FPEXC.EN. R4F-toolchain.cmake builds with
+        ;* --float_support=VFPv3D16 (hard-float), so any `float`
+        ;* arithmetic emits real VFP instructions directly -- the
+        ;* first one executed without this traps as an Undefined
+        ;* Instruction exception. Confirmed missing (and fixed)
+        ;* the same way in every GCC-based example's
+        ;* startup_awr6843.S after GCC_FreeRTOS_VitalSigns_MSS hit
+        ;* it on real hardware -- this project shares the same gap.
+        ;*------------------------------------------------------
+        MRC   p15, #0, r0, c1, c0, #2   ; read CPACR
+        ORR   r0, r0, #(0xF << 20)      ; full access to CP10/CP11
+        MCR   p15, #0, r0, c1, c0, #2   ; write CPACR
+        ISB
+        MOV   r0, #0x40000000           ; FPEXC.EN
+        VMSR  fpexc, r0
+
+        ;*------------------------------------------------------
         ;* Abort mode: set SP_abt (shared exception stack)
         ;*------------------------------------------------------
         MRS   r0, cpsr

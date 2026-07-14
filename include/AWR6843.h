@@ -25,6 +25,7 @@
 #include "AWR6843_MAILBOX.h"
 #include "AWR6843_VIM.h"
 #include "AWR6843_RTI.h"
+#include "AWR6843_DSSREG.h"
 
 #define SOC_XWR68XX_MSS_QSPI_BASE_ADDRESS             0xC0800000U
 #define SOC_XWR68XX_MSS_DMA_2_PKT_BASE_ADDRESS        0xFCF81000U
@@ -89,6 +90,11 @@
 #define SOC_XWR68XX_MSS_MBOX_MSS_DSS_MEM_BASE_ADDRESS 0xF0604000U
 #define SOC_XWR68XX_MSS_MBOX_DSS_MSS_REG_BASE_ADDRESS 0xF0608300U
 #define SOC_XWR68XX_MSS_MBOX_DSS_MSS_MEM_BASE_ADDRESS 0xF0605000U
+/* MSS-side window into the DSP subsystem's power/reset control block --
+ * see AWR6843_DSSREG.h for why MSS needs to touch this at all (DSP power
+ * domain is OFF on POR, confirmed on real hardware; releasing it is
+ * MSS application software's job, not something automatic). */
+#define SOC_XWR68XX_MSS_DSSREG_BASE_ADDRESS           0x50000400U
 
 /*
  * Defined 'static' on purpose: these pointer constants live in a header that is
@@ -115,6 +121,7 @@ static volatile MAILBOX_Type* const MBOX_MSS_DSS_REG = (volatile MAILBOX_Type*)S
 static volatile MAILBOX_Type* const MBOX_DSS_MSS_REG = (volatile MAILBOX_Type*)SOC_XWR68XX_MSS_MBOX_DSS_MSS_REG_BASE_ADDRESS;
 static volatile VIM_Type* const VIM = (volatile VIM_Type*)SOC_XWR68XX_MSS_VIM_BASE_ADDRESS;
 static volatile RTI_Type* const RTI_A = (volatile RTI_Type*)SOC_XWR68XX_MSS_RTIA_BASE_ADDRESS;
+static volatile DSSREG_Type* const DSSREG = (volatile DSSREG_Type*)SOC_XWR68XX_MSS_DSSREG_BASE_ADDRESS;
 
 
 

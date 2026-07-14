@@ -133,6 +133,28 @@ _resetEntry:
     isb
 
     /*------------------------------------------------------
+     * Enable the VFP coprocessor: full CP10/CP11 access via
+     * CPACR, then FPEXC.EN. GCC-R4F-toolchain.cmake builds
+     * with -mfloat-abi=hard (-mfpu=vfpv3-d16), so any `float`
+     * arithmetic emits real VFP instructions directly -- the
+     * first one executed without this traps as an Undefined
+     * Instruction exception. This project itself never uses
+     * float today, but GCC_FreeRTOS_VitalSigns_MSS (same
+     * compile flags, same startup file lineage) does, and hit
+     * exactly that on real hardware (repeating "UNDEFINED
+     * INSTRUCTION" the moment a float-parsing CLI command ran)
+     * before this step was added there -- fixed here too so
+     * the gap doesn't resurface the next time this project (or
+     * a copy of it) starts using floating point.
+     *------------------------------------------------------*/
+    mrc   p15, #0, r0, c1, c0, #2   /* read CPACR */
+    orr   r0, r0, #(0xF << 20)      /* full access to CP10/CP11 */
+    mcr   p15, #0, r0, c1, c0, #2   /* write CPACR */
+    isb
+    mov   r0, #0x40000000           /* FPEXC.EN */
+    vmsr  fpexc, r0
+
+    /*------------------------------------------------------
      * Abort mode: set SP_abt (shared exception stack)
      *------------------------------------------------------*/
     mrs   r0, cpsr
@@ -311,9 +333,10 @@ _dabortEntry:
      * architecture convention) -- subtract 8 to get the actual PC.
      * DFAR/DFSR (CP15 c6/c0/0 and c5/c0/0) give the faulting address and
      * fault-type/status, matching a real "why did this happen" report
-     * instead of just "somewhere in vTaskDelay()" -- see the conversation
-     * this came from: this abort was reproduced repeatedly but never
-     * pinned down further through code review alone. */
+     * instead of just "somewhere in vTaskDelay()" -- see
+     * gcc_freertos_mss_port.md in the AWR6xxx_Toolchain memory notes: this
+     * abort was reproduced repeatedly but never pinned down further
+     * through code review alone until this diagnostic was added. */
     mrc   p15, #0, r0, c6, c0, #0   /* r0 = DFAR (faulting address) */
     mrc   p15, #0, r1, c5, c0, #0   /* r1 = DFSR (fault status) */
     mov   r2, lr

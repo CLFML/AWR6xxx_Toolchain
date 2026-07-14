@@ -45,11 +45,25 @@
  *     after all) that TI's `__TI_auto_init` does automatically from its
  *     `.cinit` table -- GNU's C runtime here is minimal enough (no libc
  *     startup pulled in) that this file has to do both directly.
+ *
+ * FreeRTOS variant: the SVC and IRQ vector-table entries below point at
+ * FreeRTOS_SVC_Handler/FreeRTOS_IRQ_Handler (FreeRTOS-Kernel's
+ * portable/GCC/ARM_CRx_No_GIC/portASM.S) instead of the infinite-loop
+ * placeholders Barebones_MSS/GCC_MSS use -- see this toolchain repo's
+ * shared ../../src/freertos_iwr68xx.c for the VIM/RTI interrupt-controller
+ * integration those handlers rely on. Neither
+ * handler needs its own banked-mode stack beyond what's already set up
+ * here: FreeRTOS_SVC_Handler's first instruction (SRSDB sp!, #SYS_MODE)
+ * targets System mode's own SP, never SVC's; FreeRTOS_IRQ_Handler only
+ * briefly touches IRQ mode's SP (two words, at entry, before switching to
+ * SVC mode) -- the existing 512-byte _irqStack already covers that.
  *----------------------------------------------------------------------------*/
     .syntax unified
     .arm
 
     .global _resetEntry
+    .extern FreeRTOS_SVC_Handler
+    .extern FreeRTOS_IRQ_Handler
 
 /*------------------------------------------------------------------------------
  * Interrupt vector table -> placed at 0x00000000 by the linker (.intvecs)
@@ -69,10 +83,10 @@ _intvecs:
 
 reset_addr:  .word _resetEntry
 undef_addr:  .word _undefEntry
-svc_addr:    .word _svcEntry
+svc_addr:    .word FreeRTOS_SVC_Handler
 pabort_addr: .word _pabortEntry
 dabort_addr: .word _dabortEntry
-irq_addr:    .word _irqEntry
+irq_addr:    .word FreeRTOS_IRQ_Handler
 fiq_addr:    .word _fiqEntry
 
 /*------------------------------------------------------------------------------
@@ -124,14 +138,14 @@ _resetEntry:
      * with -mfloat-abi=hard (-mfpu=vfpv3-d16), so any `float`
      * arithmetic emits real VFP instructions directly -- the
      * first one executed without this traps as an Undefined
-     * Instruction exception. This project itself never uses
-     * float today, but GCC_FreeRTOS_VitalSigns_MSS (same
-     * compile flags, same startup file lineage) does, and hit
-     * exactly that on real hardware (repeating "UNDEFINED
-     * INSTRUCTION" the moment a float-parsing CLI command ran)
-     * before this step was added there -- fixed here too so
-     * the gap doesn't resurface the next time this project (or
-     * a copy of it) starts using floating point.
+     * Instruction exception. This is the one project in the
+     * toolchain that actually uses `float` (cli_vitalsigns.c's
+     * CLI argument parsing/config structs); confirmed on real
+     * hardware (repeating "UNDEFINED INSTRUCTION" the moment a
+     * float-parsing CLI command ran) that this step was simply
+     * missing -- every other GCC-based example here has the
+     * same gap in its startup_awr6843.S, just never tripped it
+     * since none of them ever touch a float.
      *------------------------------------------------------*/
     mrc   p15, #0, r0, c1, c0, #2   /* read CPACR */
     orr   r0, r0, #(0xF << 20)      /* full access to CP10/CP11 */
@@ -286,14 +300,48 @@ bss_start_addr:         .word __bss_start__
 bss_end_addr:            .word __bss_end__
 
 /*------------------------------------------------------------------------------
- * Minimal exception handlers: spin in place so faults are deterministic
- * (a debugger, if attached, will stop here instead of running off into RAM).
+ * Exception handlers. SVC and IRQ are handled by FreeRTOS_SVC_Handler/
+ * FreeRTOS_IRQ_Handler instead (see vector table above) -- FIQ is never
+ * enabled by this port, so it keeps a silent spin-in-place placeholder
+ * like the non-RTOS examples (a debugger, if attached, will stop there
+ * instead of running off into RAM).
+ *
+ * Undefined/Prefetch-Abort call vDiagFaultHandler(); Data-Abort calls the
+ * more detailed vDiagDataAbort() (reads CP15 DFAR/DFSR + the faulting PC
+ * first) -- both in src/freertos_glue.c, this project's own board-specific
+ * diagnostics (LED blink + a plain-text message repeated over UART),
+ * rather than spinning silently. A silent spin here was indistinguishable
+ * at the LED from any other hang during this port's hardware bring-up --
+ * this exact instrumentation is what actually found the real bug (an
+ * RTIA/RTIB register-address mixup, see the AWR6xxx_Toolchain memory
+ * notes, gcc_freertos_mss_port.md, for the full story). Safe to call a C
+ * function from here: Abort and Undefined modes share the dedicated
+ * _excStack set up in _resetEntry, valid regardless of what corrupted the
+ * interrupted code's own stack.
  *----------------------------------------------------------------------------*/
-_undefEntry:  b _undefEntry
-_svcEntry:    b _svcEntry
-_pabortEntry: b _pabortEntry
-_dabortEntry: b _dabortEntry
-_irqEntry:    b _irqEntry
+    .extern vDiagFaultHandler
+    .extern vDiagDataAbort
+
+_undefEntry:
+    mov   r0, #6
+    bl    vDiagFaultHandler
+_pabortEntry:
+    mov   r0, #7
+    bl    vDiagFaultHandler
+_dabortEntry:
+    /* A Data Abort's LR_abt = faulting instruction address + 8 (ARM
+     * architecture convention) -- subtract 8 to get the actual PC.
+     * DFAR/DFSR (CP15 c6/c0/0 and c5/c0/0) give the faulting address and
+     * fault-type/status, matching a real "why did this happen" report
+     * instead of just "somewhere in vTaskDelay()" -- see
+     * gcc_freertos_mss_port.md in the AWR6xxx_Toolchain memory notes: this
+     * abort was reproduced repeatedly but never pinned down further
+     * through code review alone until this diagnostic was added. */
+    mrc   p15, #0, r0, c6, c0, #0   /* r0 = DFAR (faulting address) */
+    mrc   p15, #0, r1, c5, c0, #0   /* r1 = DFSR (fault status) */
+    mov   r2, lr
+    sub   r2, r2, #8                /* r2 = faulting instruction address */
+    bl    vDiagDataAbort
 _fiqEntry:    b _fiqEntry
 
     .end

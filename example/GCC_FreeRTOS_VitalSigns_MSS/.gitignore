@@ -1,0 +1,6 @@
+build/
+build-diag/
+.vscode/
+.claude/
+.cache/
+Universal_hal/
