@@ -36,11 +36,13 @@ cmake --build build
 ```
 
 Requires (already installed on this machine):
-- `ti-cgt-arm_16.9.6.LTS`, `mmwave_sdk_03_04_00_03` (paths at the top of
-  `CMakeLists.txt` -- note the SDK path is deliberately `03_04_00_03`, not
-  the `03_06_02_00-LTS` install also present on this machine)
+- `ti-cgt-arm_16.9.6.LTS` (path at the top of `CMakeLists.txt`)
 - `python3` (runs `cmake/gen_flash_image.py`, the image-generation pipeline
   -- pure standard library, no pip packages, no mono/wine)
+
+The RadarSS firmware (`prebuilt/xwr6xxx_radarss_rprc.bin`) is vendored
+directly in this repo, so no mmWave SDK install is needed just to build --
+see `prebuilt/LICENSE-TI-RADARSS.txt` for its redistribution terms.
 
 ## Flash it (UniFlash, ~2 minutes)
 

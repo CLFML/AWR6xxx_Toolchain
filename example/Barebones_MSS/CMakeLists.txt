@@ -24,11 +24,12 @@ cmake_minimum_required(VERSION 3.14)
 #
 # Set this path to the ti-cgt-arm toolchain (it is already set for default Linux install path)
 set(TI_CGT_ROOT $ENV{HOME}/ti/ti-cgt-arm_16.9.6.LTS)
-# Set this path to the mmWave SDK. Only used for RadarSS firmware/ImageCreator
-# tooling here -- nothing in this project links against the mmWave SDK's
-# precompiled drivers (GPIO/pinmux/UART/SOC/ESM all go through Universal_hal,
-# see below).
-set(TI_MMWAVE_PATH /mnt/3c8641a4-f089-425f-b228-e740a9f7575e/ti/mmwave_sdk_03_04_00_03)
+# The RadarSS firmware binary (prebuilt/xwr6xxx_radarss_rprc.bin) is vendored
+# directly in this repo -- no mmWave SDK install needed for it. It's TI's
+# "Radar SS Firmware for IWR68xx" under the "TI Text File" license (see
+# mmwave_sdk_[ver]/docs/mmwave_sdk_software_manifest.html), which permits
+# unmodified binary redistribution for use with TI Devices provided the
+# license text is reproduced alongside it -- see prebuilt/LICENSE-TI-RADARSS.txt.
 
 # This project is genuinely bare-metal -- no SYS/BIOS, no xdc_gen, and (as of
 # UHAL_DISABLE_ESM_MODULE below) no SYS/BIOS/XDCtools install needed at all.
@@ -162,7 +163,7 @@ target_link_options(mss_program.xer4f PRIVATE
 # for safety. A future improvement would be to build a trivial do-nothing DSS
 # stub instead of shipping someone else's binary.
 # ---------------------------------------------------------------------------
-set(RADARSS_FW    ${TI_MMWAVE_PATH}/firmware/radarss/xwr6xxx_radarss_rprc.bin)
+set(RADARSS_FW    ${CMAKE_CURRENT_LIST_DIR}/prebuilt/xwr6xxx_radarss_rprc.bin)
 set(DSS_PLACEHOLDER ${CMAKE_CURRENT_LIST_DIR}/prebuilt/placeholder_dss.bin)
 set(META_IMAGE    barebones_mss.bin)
 
