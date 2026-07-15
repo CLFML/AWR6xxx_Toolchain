@@ -141,3 +141,30 @@ target_link_options(dss_program.xe674 PRIVATE
     --define=MMWAVE_L3RAM_SIZE=0xC0000
     -l${TI_LINKER_CMD}
 )
+
+# ---------------------------------------------------------------------------
+# Flashable DSS-slot component generation
+#
+# This project has no MSS component of its own to fuse into a full 3-core
+# metaimage (every other example's own metaimage is MSS+RadarSS+DSS) -- so
+# what's generated here is just dss_program.xe674, RPRC-encoded, the same
+# per-core format prebuilt/placeholder_dss.bin and
+# GCC_FreeRTOS_VitalSigns_MSS/prebuilt/testbench_dss.bin already are
+# (confirmed: both start with the "RPRC" magic). Point any MSS example's
+# own DSS_PLACEHOLDER/equivalent at this file to fuse this DSS build into
+# ITS metaimage instead of a generic placeholder or the CCS-built
+# reference -- gen_flash_image.py's ELF parsing is architecture-independent
+# (only ELFCLASS32 + endianness matter, not e_machine), the same reasoning
+# GCC_FreeRTOS_MSS/CMakeLists.txt's own use of this script already relies
+# on for its GCC-produced (not TI-produced) ELF.
+# ---------------------------------------------------------------------------
+set(DSS_RPRC_OUTPUT dss_program.bin)
+
+find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
+
+add_custom_command(TARGET dss_program.xe674 POST_BUILD
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Generating flashable DSS-slot component ${DSS_RPRC_OUTPUT}"
+    COMMAND ${PYTHON3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/../../cmake/gen_flash_image.py
+            --to-rprc $<TARGET_FILE:dss_program.xe674> ${DSS_RPRC_OUTPUT}
+)

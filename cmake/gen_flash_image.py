@@ -37,6 +37,13 @@ observed against the real tool, so LE is now just hardcoded):
   gen_flash_image.py <dev_id> <shmem_alloc> <output_file> \
       <core_id_1> <file_1> [<core_id_2> <file_2> ...]
 
+  gen_flash_image.py --to-rprc <input_elf> <output_file>
+                   Stage 1 only: RPRC-encode a single ELF and write just
+                   that (no meta-header/CRC64/CRC32) -- for producing a
+                   standalone per-core component file to use as another
+                   project's own DSS_PLACEHOLDER/similar, not a directly
+                   flashable image. See example/TI_RTOS_DSS/CMakeLists.txt.
+
   <dev_id>         Device ID, written into the meta-header's devId field.
                    Hex-parsed regardless of an "0x" prefix -- this is what
                    the real MulticoreImageGen.exe does (confirmed: CLI arg
@@ -507,10 +514,34 @@ def generate_flash_image(dev_id: int, shmem_alloc: int,
 
 def main() -> None:
     argv = sys.argv[1:]
+
+    # --to-rprc: stage 1 only (ELF -> RPRC), no meta-header/CRC64/CRC32 --
+    # for producing a standalone per-core component file (e.g. a prebuilt
+    # DSS placeholder for another project's DSS_PLACEHOLDER, see
+    # example/TI_RTOS_DSS/CMakeLists.txt), not a directly-flashable
+    # multicore image. This is exactly the format prebuilt/placeholder_dss.bin
+    # and prebuilt/testbench_dss.bin already are (confirmed: both start
+    # with the "RPRC" magic) -- those predate this script and were produced
+    # some other way; this is the first in-repo way to reproduce that
+    # format for a new core image.
+    if len(argv) == 3 and argv[0] == "--to-rprc":
+        input_elf, output_file = argv[1], argv[2]
+        with open(input_elf, "rb") as f:
+            content = f.read()
+        if not _is_elf(content):
+            sys.stderr.write("Error: %s is not an ELF file\n" % input_elf)
+            sys.exit(1)
+        rprc = elf_to_rprc(content)
+        with open(output_file, "wb") as f:
+            f.write(rprc)
+        print("RPRC component ready: %s (%d bytes)" % (output_file, len(rprc)))
+        return
+
     if len(argv) < 5 or len(argv) % 2 != 1:
         sys.stderr.write(
             "Usage: gen_flash_image.py <dev_id> <shmem_alloc> <output_file> "
-            "<core_id_1> <file_1> [<core_id_2> <file_2> ...]\n")
+            "<core_id_1> <file_1> [<core_id_2> <file_2> ...]\n"
+            "   or: gen_flash_image.py --to-rprc <input_elf> <output_file>\n")
         sys.exit(1)
 
     dev_id = parse_hex(argv[0])
