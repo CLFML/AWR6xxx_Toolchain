@@ -7,10 +7,17 @@ typedef struct {
     uint32_t size;
 } dss_mem_range_t;
 
-/* See dss_mem.h's header for where these two rows come from. */
+/* See dss_mem.h's header for where these rows come from. DSS register
+ * space (0x02000000-0x02FFFFFF, DSS-local peripherals like the RTI tick
+ * timer example/FreeRTOS_DSS uses -- see dss_freertos_port.md in the
+ * AWR6xxx_Toolchain memory notes) needs no new MPU region: it already
+ * falls inside mpu_config()'s existing region 8 ("DSS peripheral region",
+ * 2MB @ MSS_EDMA_TPTC0_BASE_ADDRESS=0x50000000), never repurposed by
+ * dss_mem_mpu_open_l2() below. */
 static const dss_mem_range_t dss_mem_ranges[] = {
     {0x51000000U, 0x20000000U, 0x02FFFFFFU}, /* L3 memory / HSRAM */
     {0x577E0000U, 0x007E0000U, 0x0081FFFFU}, /* DSS L1/L2 memory  */
+    {0x50000000U, 0x02000000U, 0x00FFFFFFU}, /* DSS register space (peripherals) */
 };
 #define DSS_MEM_NUM_RANGES (sizeof(dss_mem_ranges) / sizeof(dss_mem_ranges[0]))
 

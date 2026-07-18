@@ -5,22 +5,40 @@
 /*
  * Layout mirrors TI's mmwave_sdk reg_toprcm_xwr16xx.h (TOPRCMRegs), which the
  * SDK's own xwr68xx SOC driver reuses verbatim for this chip -- only the
- * fields actually needed here (BSSCTL, SPARE0, EFUSEREGROW10, SECURECFGREG1)
- * are named; everything else is reserved padding to keep the real offsets
- * (0x008, 0x0EC, 0x114, 0x1C4) correct.
+ * fields actually needed here are named; everything else is reserved
+ * padding to keep the real offsets (0x008, 0x0EC, 0x114, 0x1C4) correct.
+ * DSSCTL/EXTCLKDIV/EXTCLKSRCSEL/EXTCLKCTL/SOFTSYSRST (0x00C-0x01C) confirmed
+ * against the TRM's own "5.8 68xx Control Registers" > "MSS_TOPRCM
+ * Registers" table (SWRU520E, this chip's own section -- NOT the 14xx/16xx
+ * ones, which happen to share the identical layout since it's the same IP
+ * block reused across the family, but this chip's own section is what was
+ * actually checked before trusting the offsets).
  */
 typedef struct
 {
     RwReg CLKDIV;         /* Offset = 0x000 */
     RoReg RESERVED0;       /* Offset = 0x004 */
     RwReg BSSCTL;            /* Offset = 0x008 */
-    RoReg RESERVED1[56];      /* Offset = 0x00C .. 0x0EB */
+    RwReg DSSCTL;             /* Offset = 0x00C */
+    RwReg EXTCLKDIV;           /* Offset = 0x010 */
+    RwReg EXTCLKSRCSEL;         /* Offset = 0x014 */
+    RwReg EXTCLKCTL;              /* Offset = 0x018 */
+    RwReg SOFTSYSRST;               /* Offset = 0x01C */
+    RoReg RESERVED1[51];              /* Offset = 0x020 .. 0x0EB */
     RwReg SPARE0;                /* Offset = 0x0EC */
     RoReg RESERVED2[9];           /* Offset = 0x0F0 .. 0x113 */
     RoReg EFUSEREGROW10;           /* Offset = 0x114 */
     RoReg RESERVED3[43];            /* Offset = 0x118 .. 0x1C3 */
     RwReg SECURECFGREG1;             /* Offset = 0x1C4 */
 } TOPRCM_Type;
+
+/* SOFTSYSRST: write this exact value to trigger a full chip warm reset
+ * (equivalent to the physical reset button, per the TRM) -- confirmed via
+ * dss_freertos_port.md in the AWR6xxx_Toolchain memory notes needing a
+ * board reset between DSS test iterations (dssLoad/dssStart can't restart
+ * an already-running DSS -- see cli_dss_probe.c), motivating a software
+ * alternative to the physical button. */
+#define TOPRCM_SOFTSYSRST_TRIGGER_VALUE 0xADU
 
 /* BSSCTL: bits[31:16] halt status/control, [23:16] Pclock gate, [15:8] clock
  * gate, [7:0] reset -- clearing the whole register ungates+deasserts+unhalts

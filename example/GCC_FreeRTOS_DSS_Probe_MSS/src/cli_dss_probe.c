@@ -203,6 +203,42 @@ static void cli_mpu_info(int32_t argc, char* argv[]) {
     cli_write_line(")\r\n");
 }
 
+/* Raw, unrestricted MSS-address read/write -- no DSS-address translation,
+ * no range checking, any 32-bit MSS address. Added so that inspecting a
+ * NEW address range (a DSS peripheral dss_mem_translate() doesn't know
+ * about yet, some other MSS-visible register) never needs new MSS code/a
+ * reflash again -- just compute the MSS-side address once (by hand, or
+ * via dss_mem_translate()'s own documented ranges in dss_mem.h) and peek/
+ * poke it directly. Same pattern GCC_FreeRTOS_VitalSigns_MSS/src/
+ * cli_vitalsigns.c's own peek/poke already established. */
+static void cli_peek(int32_t argc, char* argv[]) {
+    volatile uint32_t* addr;
+
+    if (argc != 2) {
+        cli_write_line("Error: usage peek <hexAddr>\r\n");
+        return;
+    }
+    addr = (volatile uint32_t*)cli_parse_hex(argv[1]);
+    cli_report_hex32((uint32_t)addr);
+    cli_write_line(" = ");
+    cli_report_hex32(*addr);
+    cli_write_line("\r\n");
+}
+
+static void cli_poke(int32_t argc, char* argv[]) {
+    volatile uint32_t* addr;
+    uint32_t value;
+
+    if (argc != 3) {
+        cli_write_line("Error: usage poke <hexAddr> <hexValue>\r\n");
+        return;
+    }
+    addr = (volatile uint32_t*)cli_parse_hex(argv[1]);
+    value = cli_parse_hex(argv[2]);
+    *addr = value;
+    cli_write_line("Done\r\n");
+}
+
 /* Raw DSS memory read -- dssAddr is a DSS-side address (same numbers as
  * DSS's own linker script), translated via dss_mem_translate() before the
  * actual access. See dss_mem.h for what's in range. */
@@ -305,16 +341,39 @@ static void cli_dss_start(int32_t argc, char* argv[]) {
     }
 }
 
+/* Full chip warm reset -- same effect as the physical reset button
+ * (TOP_RCM.SOFTSYSRST, confirmed against the TRM's own "5.8 68xx Control
+ * Registers" section for this exact chip, see AWR6843_TOPRCM.h). Added
+ * because dssLoad/dssStart can't restart an already-running DSS (see
+ * cli_dss_start()'s own header) -- every DSS test iteration up to now
+ * needed a physical reset between runs; this replaces that with a CLI
+ * command, so the whole load-test-reset loop can run unattended. Never
+ * returns (the chip resets out from under this UART transaction -- the
+ * console will need to reconnect after boot, same as after a physical
+ * reset). */
+static void cli_reset(int32_t argc, char* argv[]) {
+    (void)argc;
+    (void)argv;
+
+    cli_write_line("Resetting...\r\n");
+    TOP_RCM->SOFTSYSRST = TOPRCM_SOFTSYSRST_TRIGGER_VALUE;
+    for (;;) {
+    }
+}
+
 static void cli_help(int32_t argc, char* argv[]) {
     (void)argc;
     (void)argv;
     cli_write_line("Commands:\r\n");
     cli_write_line("  dssStatus\r\n");
     cli_write_line("  mpuInfo\r\n");
+    cli_write_line("  peek <hexAddr>  (raw MSS address, no translation)\r\n");
+    cli_write_line("  poke <hexAddr> <hexValue>  (raw MSS address, no translation)\r\n");
     cli_write_line("  dssPeek <hexDssAddr>\r\n");
     cli_write_line("  dssPoke <hexDssAddr> <hexValue>\r\n");
     cli_write_line("  dssLoad <hexDssAddr> <decSizeBytes>  (then send raw bytes)\r\n");
     cli_write_line("  dssStart\r\n");
+    cli_write_line("  reset  (full chip warm reset, same as the physical reset button)\r\n");
     cli_write_line("  help\r\n");
 }
 
@@ -326,10 +385,13 @@ typedef struct {
 static const cli_command_t cli_commands[] = {
     {"dssStatus", cli_dss_status},
     {"mpuInfo", cli_mpu_info},
+    {"peek", cli_peek},
+    {"poke", cli_poke},
     {"dssPeek", cli_dss_peek},
     {"dssPoke", cli_dss_poke},
     {"dssLoad", cli_dss_load},
     {"dssStart", cli_dss_start},
+    {"reset", cli_reset},
     {"help", cli_help},
 };
 #define CLI_NUM_COMMANDS (sizeof(cli_commands) / sizeof(cli_commands[0]))
